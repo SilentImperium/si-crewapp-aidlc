@@ -1,0 +1,35 @@
+{
+  "name": "zens-aidlc",
+  "version": "0.1.0",
+  "displayName": "Zens-AIDLC",
+  "description": "Folder-first AI-DLC studio for Windows and Linux: create a local project folder, let the app install and configure the aidlc CLI (harness, effort preset, workflow profile), watch doctor health and the live 5-phase stage map, and hand off to your harness when ready. The repo comes second, not first.",
+  "author": "Silent Imperium",
+  "iconPath": "assets/icon.png",
+  "minKiroCrewVersion": "0.7.2",
+  "tags": ["aidlc", "ai-dlc", "workflows", "kiro", "windows", "linux", "developer-tools"],
+  "platform": {
+    "os": ["windows", "linux"]
+  },
+  "ui": {
+    "entry": "index.mjs",
+    "pages": [
+      {
+        "route": "/apps/zens-aidlc",
+        "label": "Zens-AIDLC",
+        "icon": "Workflow"
+      }
+    ]
+  },
+  "backend": {
+    "type": "python",
+    "entryPoint": "backend/server.py",
+    "port": "auto",
+    "healthCheck": "/health"
+  },
+  "permissions": {
+    "api": [
+      "/apps/zens-aidlc/api",
+      "/apps/zens-aidlc/api/*"
+    ]
+  }
+}

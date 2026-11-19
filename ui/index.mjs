@@ -850,7 +850,7 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
       h("span", { style: { fontSize: 11.5, color: "#64748b" } },
         projects.length ? `${projects.length} tracked in your AI-DLC portfolio` : "your AI-DLC portfolio")
     ),
-    // two-column content: the global settings status (left) + the portfolio (right)
+    // top row: the global settings status (left) + the compact add-project panel (right)
     h(
       "div",
       { style: { display: "flex", gap: 16, alignItems: "flex-start" } },
@@ -861,16 +861,14 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
         { style: { flex: "0 0 240px", width: 240, display: "flex", flexDirection: "column", gap: 12 } },
         h(SettingsStatusDashboard)
       ),
+      // right column: the compact add-project panel, left-aligned so it lines
+      // up with the full-width project grid below
       h(
         "div",
-        { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
-        // add project - a compact, centered neon panel (not full-width)
-    h(
-      "div",
-        { style: { display: "flex", justifyContent: "center" } },
-      h(
-        "div",
-          { className: "aidlc-neon-top", style: { width: 560, maxWidth: "100%" } },
+        { style: { flex: "1 1 0", minWidth: 0 } },
+        h(
+          "div",
+            { className: "aidlc-neon-top", style: { width: 560, maxWidth: "100%" } },
         h(
           Card,
             { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#4ade80" } }), pulse: true },
@@ -903,8 +901,9 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
           h(Button, { onClick: onAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
         )
       )
-    ),
-    // all projects label - just above the list itself
+    )
+  ),
+  // all projects - full width, below the top row
     projects.length > 0 &&
       h(
         "div",
@@ -988,10 +987,8 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
             )
           )
         )
-      )
     )
-  )
-}
+  }
 
 // ---------------------------------------------------------------------------
 // setup status - what's actually missing, so "needs setup" is explainable

@@ -54,9 +54,24 @@ export const tailLogs = (after, limit) =>
 export const getGitRemote = (pid) => http("GET", `projects/${pid}/git-remote`)
 export const createIssue = (pid, d) => http("POST", `projects/${pid}/issue`, d)
 export const setMode = (pid, mode, crew) => http("POST", `projects/${pid}/mode`, { mode, crew })
-export const spawnTerminal = (pid, command) =>
-  http("POST", `projects/${pid}/terminal`, { command: command ?? null })
+export const spawnTerminal = (pid, command, cols = 80, rows = 24) =>
+  http("POST", `projects/${pid}/terminal`, { command: command ?? null, cols, rows })
 export const terminalInput = (tid, data) => http("POST", `terminals/${tid}/input`, { data })
+// The terminal stream is raw PTY bytes, base64-encoded. Decode as UTF-8 (not
+// Latin-1) so box-drawing chars, emoji and CJK render correctly.
+export function b64ToUtf8(b64) {
+  if (!b64) return ""
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new TextDecoder("utf-8").decode(bytes)
+}
+export function utf8ToB64(str) {
+  const bytes = new TextEncoder().encode(str)
+  let bin = ""
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
 export const terminalResize = (tid, cols, rows) =>
   http("POST", `terminals/${tid}/resize`, { cols, rows })
 export const killTerminal = (tid) => http("DELETE", `terminals/${tid}`)

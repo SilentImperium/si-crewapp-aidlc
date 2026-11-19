@@ -71,14 +71,25 @@ def _argv(shell: str, command: str | None, cwd: str) -> list[str]:
     return [shell, "-c", command]
 
 
-def spawn(cwd: str, command: str | None = None, env_extra: dict | None = None) -> dict:
+def spawn(
+    cwd: str,
+    command: str | None = None,
+    env_extra: dict | None = None,
+    cols: int = 80,
+    rows: int = 24,
+) -> dict:
     """Spawn a shell (optionally running *command*) in *cwd*; return the session.
 
-    The reader thread is started here; it feeds ``out_q`` with base64 output
+    *cols*/*rows* seed the initial window size so interactive TUIs (opencode,
+    kiro, ...) lay out at the real size instead of a 0x0 / 80x24 guess. The
+    reader thread is started here; it feeds ``out_q`` with base64 output
     chunks and, at the end, one ``{"exit": code}`` marker.
     """
     shell = _pick_shell()
     argv = _argv(shell, command, cwd)
+
+    cols = max(2, min(int(cols), 500))
+    rows = max(1, min(int(rows), 200))
 
     env = dict(os.environ)
     env.setdefault("TERM", _TERM)
@@ -92,6 +103,8 @@ def spawn(cwd: str, command: str | None = None, env_extra: dict | None = None) -
         "shell": shell,
         "cwd": cwd,
         "command": command,
+        "cols": cols,
+        "rows": rows,
         "out_q": queue.Queue(),
         "in_lock": threading.Lock(),
         "done": threading.Event(),
@@ -99,9 +112,13 @@ def spawn(cwd: str, command: str | None = None, env_extra: dict | None = None) -
     }
 
     if IS_WINDOWS:
+        # No pty in the stdlib: a TUI over pipes at least reads LINES/COLUMNS
+        # (Ink, some CLIs) to size its layout. Real ConPTY is a follow-up.
+        env["LINES"] = str(rows)
+        env["COLUMNS"] = str(cols)
         _spawn_windows(sess, argv, cwd, env)
     else:
-        _spawn_posix(sess, argv, cwd, env)
+        _spawn_posix(sess, argv, cwd, env, cols, rows)
 
     with _LOCK:
         SESSIONS[tid] = sess

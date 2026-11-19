@@ -45,7 +45,17 @@ import {
   radarCrewSettings,
   radarIssues,
   radarPulls,
+  b64ToUtf8,
+  utf8ToB64,
 } from "./lib.mjs"
+
+// xterm.js is vendored as dependency-free ESM (no build step, no CDN) so the
+// KiroCrew host can load it. It's a real terminal emulator - handles full-screen
+// TUIs (opencode, kiro), colours, cursor positioning and scrollback. It is
+// loaded with a DYNAMIC import() inside TerminalWidget (not a static import at
+// the top of the module) so that if the vendor files are ever absent from a
+// deployment, only the terminal degrades - the rest of the app still loads.
+// See the TerminalWidget mount effect for the import.
 
 const React = window.__kirocrew_modules.react
 const { useState, useEffect, useRef, useCallback, useMemo } = React
@@ -80,6 +90,25 @@ const {
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+
+// xterm.css is vendored next to the bundle. Load it once via a same-origin
+// <link> (CSP allows style-src 'self'), resolved relative to THIS module so it
+// works regardless of the document URL. A failed load is non-fatal: the terminal
+// still works, just unstyled.
+let _xtermCss = false
+function ensureXtermCss() {
+  if (_xtermCss) return
+  _xtermCss = true
+  try {
+    const url = new URL("./vendor/xterm.css", import.meta.url).href
+    const link = document.createElement("link")
+    link.rel = "stylesheet"
+    link.href = url
+    document.head.appendChild(link)
+  } catch {
+    /* ignore - terminal renders unstyled */
+  }
+}
 
 // ---------------------------------------------------------------------------
 // shared bits
@@ -836,6 +865,81 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
 }
 
 // ---------------------------------------------------------------------------
+// setup status - what's actually missing, so "needs setup" is explainable
+
+// Name the specific gaps for a project that isn't set up yet. Drives the
+// "needs setup" tooltip so the user sees *what* to fix, not just a bare flag.
+function missingSetup(pstate) {
+  if (!pstate) return ["project state is still loading"]
+  const items = []
+  const cli = pstate.cli || {}
+  if (!cli.aidlc || !cli.aidlc.installed)
+    items.push("aidlc CLI is not installed - use “Install CLI” in the setup wizard")
+  if (!pstate.settings) items.push("aidlc.settings.json is missing")
+  if (!pstate.stamp) items.push("the .aidlc/ engine hasn’t been generated (run setup)")
+  if (pstate.project && !pstate.project.git) items.push("the folder is not a git repository")
+  if (items.length === 0) items.push("run the setup wizard to generate the .aidlc/ engine")
+  return items
+}
+
+// A small warning icon that, on hover, pops a bubble listing what's missing.
+// Falls back to a native title tooltip too, so the info is never lost.
+function SetupTip({ items }) {
+  const [show, setShow] = useState(false)
+  return h(
+    "span",
+    {
+      style: { position: "relative", display: "inline-flex" },
+      onMouseEnter: () => setShow(true),
+      onMouseLeave: () => setShow(false),
+    },
+    h(
+      "span",
+      {
+        style: { display: "inline-flex", color: "#fbbf24", cursor: "help", padding: 2, borderRadius: "50%" },
+        title: items.join("  ·  "),
+      },
+      h(CircleAlert, { size: 15 })
+    ),
+    show &&
+      h(
+        "div",
+        {
+          style: {
+            position: "absolute",
+            top: "100%",
+            right: -6,
+            marginTop: 8,
+            width: 296,
+            background: "#0b0e14",
+            border: "1px solid rgba(251,191,36,.45)",
+            borderRadius: 10,
+            padding: "10px 12px",
+            zIndex: 60,
+            boxShadow: "0 12px 32px rgba(0,0,0,.55)",
+          },
+        },
+        h(
+          "div",
+          { style: { fontSize: 10.5, fontWeight: 700, color: "#fbbf24", letterSpacing: ".05em", marginBottom: 7 } },
+          "NEEDS SETUP"
+        ),
+        h(
+          "ul",
+          { style: { margin: 0, paddingLeft: 16, display: "flex", flexDirection: "column", gap: 5 } },
+          items.map((it) =>
+            h(
+              "li",
+              { key: it, style: { fontSize: 11.5, color: "#cbd5e1", lineHeight: 1.45 } },
+              it
+            )
+          )
+        )
+      )
+  )
+}
+
+// ---------------------------------------------------------------------------
 // WORKING view - "the current project" (focused, one at a time)
 
 function WorkingView({
@@ -862,31 +966,49 @@ function WorkingView({
     h(
       "div",
       { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 } },
-      // back + project header
+      // back button (small, its own line) + headline project name + status
       h(
         "div",
-        { style: { display: "flex", alignItems: "center", gap: 10 } },
-        h(Button, { kind: "ghost", onClick: onBack }, h(ArrowLeft, { size: 14 }), "Project Management"),
-        h("div", { style: { flex: 1, minWidth: 0 } },
-          h("div", { style: { fontSize: 18, fontWeight: 700 } }, proj.name),
-          h(
-            "div",
-            {
-              style: {
-                fontSize: 11,
-                fontFamily: MONO,
-                color: "#64748b",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              },
-            },
-            proj.path
-          )
+        { style: { display: "flex", flexDirection: "column", gap: 6 } },
+        h(
+          Button,
+          { kind: "ghost", small: true, onClick: onBack },
+          h(ArrowLeft, { size: 12 }),
+          "Project Management"
         ),
-        pstate &&
-          h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
-            pstate.setup_done ? "set up" : "needs setup")
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 10 } },
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h(
+              "div",
+              { style: { fontSize: 21, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.1 } },
+              proj.name
+            ),
+            h(
+              "div",
+              {
+                style: {
+                  fontSize: 11,
+                  fontFamily: MONO,
+                  color: "#64748b",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                },
+              },
+              proj.path
+            )
+          ),
+          pstate &&
+            h(
+              "div",
+              { style: { display: "flex", alignItems: "center", gap: 7 } },
+              h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
+                pstate.setup_done ? "set up" : "needs setup"),
+              !pstate.setup_done && h(SetupTip, { items: missingSetup(pstate) })
+            )
+        )
       ),
       // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
       !proj.setup_done
@@ -1253,47 +1375,137 @@ function IntakeForm({ pid, onCreated }) {
   )
 }
 
-// Self-contained terminal: streams a local shell's I/O (spawned by the backend
-// PTY bridge) and forwards input. No xterm.js / no build step - ANSI stripped,
-// output in a scroll pane, a command line at the bottom.
-// Self-contained terminal: streams a local shell's I/O (spawned by the backend
-// PTY bridge) and forwards input. No xterm.js / no build step - ANSI stripped,
-// output in a scroll pane that fills its parent, a command line at the bottom.
-// Reports liveness via onActiveChange so the enclosing drawer can show a dot.
+// Real embedded terminal (xterm.js, vendored). Streams a local shell's I/O
+// (spawned by the backend PTY bridge) into a genuine terminal emulator, so
+// full-screen TUIs (opencode, kiro) render properly - colours, cursor
+// positioning and scrollback. Keystrokes are forwarded to the live shell; the
+// session keeps streaming while the enclosing drawer is collapsed. Reports
+// liveness via onActiveChange so the drawer can show a live dot.
 function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
   const [tid, setTid] = useState(null)
-  const [out, setOut] = useState("")
   const [exited, setExited] = useState(null)
-  const [cmd, setCmd] = useState("")
   const [spawning, setSpawning] = useState(false)
+  const [err, setErr] = useState("")
+  const containerRef = useRef(null)
+  const termRef = useRef(null)
+  const fitRef = useRef(null)
+  const tidRef = useRef(null)
   const subRef = useRef(null)
-  const preRef = useRef(null)
+
+  const running = tid != null && exited == null
+
+  // report liveness to the drawer
+  useEffect(() => {
+    if (onActiveChange) onActiveChange(running || spawning)
+  }, [running, spawning, onActiveChange])
+
+  // create the terminal once. xterm.js is dynamic-imported so a missing vendor
+  // file degrades to just the terminal (a clear error), not the whole app.
+  useEffect(() => {
+    let cancelled = false
+    let term = null
+    let fit = null
+    let ro = null
+    ;(async () => {
+      try {
+        const { Terminal: XTerm } = await import("./vendor/xterm.mjs")
+        const { FitAddon } = await import("./vendor/addon-fit.mjs")
+        if (cancelled || !containerRef.current) return
+        ensureXtermCss()
+        term = new XTerm({
+          cursorBlink: true,
+          fontSize: 13,
+          letterSpacing: 0,
+          fontFamily: "'JetBrains Mono', " + MONO,
+          scrollback: 5000,
+          allowProposedApi: true,
+          theme: {
+            background: "#0b0e14",
+            foreground: "#e2e8f0",
+            cursor: "#34d399",
+            cursorAccent: "#0b0e14",
+            selectionBackground: "rgba(52,211,153,.28)",
+            black: "#0b0e14", red: "#f87171", green: "#34d399", yellow: "#fbbf24",
+            blue: "#60a5fa", magenta: "#c084fc", cyan: "#22d3ee", white: "#e2e8f0",
+            brightBlack: "#64748b", brightRed: "#fca5a5", brightGreen: "#6ee7b7",
+            brightYellow: "#fde68a", brightBlue: "#93c5fd", brightMagenta: "#d8b4fe",
+            brightCyan: "#67e8f9", brightWhite: "#f8fafc",
+          },
+        })
+        fit = new FitAddon()
+        term.loadAddon(fit)
+        term.open(containerRef.current)
+        requestAnimationFrame(() => {
+          try {
+            fit.fit()
+          } catch (e) {
+            /* render service not ready yet */
+          }
+        })
+        ro = new ResizeObserver(() => {
+          try {
+            fit.fit()
+            if (tidRef.current) terminalResize(tidRef.current, term.cols, term.rows).catch(() => {})
+          } catch (e) {
+            /* ignore */
+          }
+        })
+        ro.observe(containerRef.current)
+        term.onData((data) => {
+          if (tidRef.current) terminalInput(tidRef.current, utf8ToB64(data)).catch(() => {})
+        })
+        termRef.current = term
+        fitRef.current = fit
+      } catch (e) {
+        if (!cancelled) setErr("terminal library failed to load: " + (e && e.message ? e.message : String(e)))
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (ro) ro.disconnect()
+      try {
+        if (term) term.dispose()
+      } catch (e) {
+        /* ignore */
+      }
+      termRef.current = null
+      fitRef.current = null
+    }
+  }, [])
 
   const spawn = useCallback(
     async (command) => {
-      if (subRef.current) subRef.current.close()
+      if (subRef.current) {
+        subRef.current.close()
+        subRef.current = null
+      }
       setSpawning(true)
-      setOut("")
       setExited(null)
+      setErr("")
       try {
-        const r = await spawnTerminal(pid, command)
-        setTid(r.terminal_id)
-        subRef.current = subscribeTerminal(r.terminal_id, {
+        const term = termRef.current
+        const cols = term ? term.cols : 80
+        const rows = term ? term.rows : 24
+        const r = await spawnTerminal(pid, command, cols, rows)
+        const id = r.terminal_id
+        tidRef.current = id
+        setTid(id)
+        if (term) term.clear()
+        // seed the backend with the real size up front so TUIs lay out right
+        terminalResize(id, cols, rows).catch(() => {})
+        subRef.current = subscribeTerminal(id, {
           onOut: (d) => {
-            if (d && d.data) {
-              let s
-              try {
-                s = atob(d.data)
-              } catch {
-                return
-              }
-              setOut((prev) => (prev.length > 60000 ? prev.slice(-40000) : prev) + s)
-            }
+            if (d && d.data && termRef.current) termRef.current.write(b64ToUtf8(d.data))
           },
-          onExit: (d) => setExited(d && d.exit != null ? d.exit : -1),
+          onExit: (d) => {
+            const code = d && d.exit != null ? d.exit : -1
+            setExited(code)
+            if (termRef.current)
+              termRef.current.write("\r\n\x1b[90m[process exited with code " + code + "]\x1b[0m\r\n")
+          },
         })
       } catch (e) {
-        setOut("terminal spawn failed: " + (e.message || e))
+        setErr("terminal spawn failed: " + (e && e.message ? e.message : String(e)))
       } finally {
         setSpawning(false)
       }
@@ -1301,44 +1513,19 @@ function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
     [pid]
   )
 
-  const send = () => {
-    const c = cmd
-    if (!tid || !c) return
-    try {
-      terminalInput(tid, btoa(c + "\r")).catch(() => {})
-      setOut((prev) => prev + "\n> " + c + "\n")
-      setCmd("")
-    } catch {
-      /* ignore */
-    }
-  }
-
-  useEffect(() => {
-    if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight
-  }, [out])
-
+  // close the SSE subscription on unmount
   useEffect(
     () => () => {
       if (subRef.current) subRef.current.close()
+      tidRef.current = null
     },
     []
   )
 
-  const running = tid != null && exited == null
-  useEffect(() => {
-    if (onActiveChange) onActiveChange(running || spawning)
-  }, [running, spawning, onActiveChange])
-
-  const clean = out.replace(/\x1b\[[0-9;?]*[ -~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "")
-  const placeholder = spawning
-    ? "spawning…"
-    : tid
-      ? "running - waiting for the harness to produce output…"
-      : "no terminal yet - start a shell or launch the harness above"
-
   return h(
     "div",
     { style: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 } },
+    // controls
     h(
       "div",
       { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
@@ -1352,11 +1539,7 @@ function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
             h(Rocket, { size: 12 }),
             "Launch harness"
           )
-        : h(
-            "span",
-            { style: { fontSize: 11, color: "#64748b" } },
-            "no CLI for this harness"
-          ),
+        : h("span", { style: { fontSize: 11, color: "#64748b" } }, "no CLI for this harness"),
       tid &&
         h(Button, { small: true, kind: "danger", onClick: () => killTerminal(tid).catch(() => {}) },
           h(Square, { size: 12 }),
@@ -1376,48 +1559,39 @@ function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
         h("span", { style: { color: "#a78bfa" } }, "tip: "),
         launchHint
       ),
+    // the xterm pane (fills the remaining height)
     h(
       "div",
       {
-        ref: preRef,
         style: {
           flex: 1,
           minHeight: 120,
-          overflow: "auto",
-          background: "rgba(2,6,23,.85)",
+          overflow: "hidden",
+          background: "#0b0e14",
           border: "1px solid rgba(148,163,184,.25)",
           borderRadius: 8,
-          padding: "10px 12px",
-          fontFamily: MONO,
-          fontSize: 11.5,
-          lineHeight: 1.5,
-          color: "#cbd5e1",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
+          position: "relative",
         },
       },
-      clean ? clean : h("span", { style: { color: "#475569" } }, placeholder)
-    ),
-    h(
-      "div",
-      { style: { display: "flex", gap: 8 } },
-      h(
-        "input",
-        {
-          style: { ...inputStyle, flex: 1 },
-          value: cmd,
-          placeholder: running ? "type a command and press Enter (sent to the live shell)" : "start a terminal first",
-          disabled: !running,
-          onChange: (e) => setCmd(e.target.value),
-          onKeyDown: (e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              send()
-            }
+      h("div", { ref: containerRef, style: { position: "absolute", inset: 0, padding: 6 } }),
+      err &&
+        h(
+          "div",
+          {
+            style: {
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 12,
+              textAlign: "center",
+              fontSize: 12,
+              color: "#f87171",
+            },
           },
-        }
-      ),
-      h(Button, { small: true, onClick: send, disabled: !running || !cmd }, "Send")
+          err
+        )
     )
   )
 }

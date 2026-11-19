@@ -988,8 +988,12 @@ class Handler(BaseHTTPRequestHandler):
                 # leave it None for a plain interactive shell.
                 command = d.get("command")
                 command = str(command) if command is not None else None
-                sess = terminal.spawn(proj["path"], command)
-                _append_line("[si-crewapp-aidlc] terminal %s spawned (%s, cwd %s)" % (sess["id"], command or "shell", proj["path"]))
+                # seed the pty/pipe at the real size so interactive TUIs (opencode,
+                # kiro, ...) lay out correctly instead of guessing 80x24.
+                cols = int(d.get("cols") or 80)
+                rows = int(d.get("rows") or 24)
+                sess = terminal.spawn(proj["path"], command, cols=cols, rows=rows)
+                _append_line("[si-crewapp-aidlc] terminal %s spawned (%s, %dx%d, cwd %s)" % (sess["id"], command or "shell", cols, rows, proj["path"]))
                 return self._json(201, {"terminal_id": sess["id"], "pid": sess["pid"], "shell": sess["shell"]})
 
             m = re.fullmatch(r"terminals/([^/]+)/stream", api)

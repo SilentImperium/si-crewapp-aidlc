@@ -61,6 +61,13 @@ export const getProjectFiles = (pid) => http("GET", `projects/${pid}/files`)
 // the OS file manager / default app (Explorer on Windows, xdg-open on Linux).
 export const openInExplorer = (pid, path) =>
   http("POST", `projects/${pid}/open-in-explorer`, { path: path ?? null })
+// Is the host `gh` present + authenticated (the KiroCrew GitHub connector /
+// `gh auth login` populates gh's host config, which the app backend reads even
+// in its scrubbed env)? Global - gh auth is host-level, not per-project.
+export const getGhStatus = () => http("GET", "gh-status")
+// Host the project folder on GitHub: ensure it is a git repo, create the remote
+// repo (via host gh auth) if missing, set it as `origin`, and push the branch.
+export const hostOnGithub = (pid, d) => http("POST", `projects/${pid}/host-on-github`, d)
 // Open a native terminal window OUTSIDE the app (Windows Terminal, else a
 // detached PowerShell console) in the project folder, optionally running the
 // harness command. The window is fully detached - it outlives the app.

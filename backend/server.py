@@ -1078,9 +1078,29 @@ class Handler(BaseHTTPRequestHandler):
                 return self._sse(qs)
 
             # -- crew / forge / terminal (companion-app + cockpit surface) -----
+            if method == "GET" and api == "gh-status":
+                return self._json(200, forge.gh_auth_status())
             m = re.fullmatch(r"projects/([^/]+)/git-remote", api)
             if m and method == "GET":
                 return self._json(200, forge.git_remote(get_project(m.group(1))["path"]))
+            m = re.fullmatch(r"projects/([^/]+)/host-on-github", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                proj = get_project(m.group(1))
+                try:
+                    r = forge.host_on_github(
+                        proj["path"],
+                        str(d.get("repo") or proj.get("name") or "").strip(),
+                        bool(d.get("private", True)),
+                        bool(d.get("push", True)),
+                    )
+                except forge.ForgeError as e:
+                    return self._json(e.status, {"error": e.msg})
+                _append_line(
+                    "[si-crewapp-aidlc] hosted %s on github: %s (created=%s pushed=%s)"
+                    % (proj["name"], r.get("url"), r.get("created"), r.get("pushed"))
+                )
+                return self._json(201, r)
             m = re.fullmatch(r"projects/([^/]+)/issue", api)
             if m and method == "POST":
                 d = _json_body(body)

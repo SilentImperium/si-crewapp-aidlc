@@ -37,6 +37,8 @@ import {
   openTerminal,
   getProjectFiles,
   openInExplorer,
+  getGhStatus,
+  hostOnGithub,
   radarCrews,
   radarCrew,
   radarCreateCrew,
@@ -75,6 +77,7 @@ const {
   File,
   FolderOpen,
   RefreshCw,
+  Github,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -1583,6 +1586,14 @@ function CrewCockpit({ proj, onSetMode }) {
     (proj.name || "crew").trim().replace(/\s+/g, "-").toLowerCase() + "-crew"
   )
   const [enabling, setEnabling] = useState(false)
+  // "Set up a GitHub origin" (shown only while there is no origin remote yet)
+  const [ghStatus, setGhStatus] = useState(null)
+  const [repoName, setRepoName] = useState(
+    (proj.name || "repo").trim().replace(/\s+/g, "-").toLowerCase()
+  )
+  const [hosting, setHosting] = useState(false)
+  const [hostErr, setHostErr] = useState("")
+  const [hostDone, setHostDone] = useState(null)
 
   // the git remote (owner/repo) the crew binds to
   useEffect(() => {
@@ -1592,6 +1603,15 @@ function CrewCockpit({ proj, onSetMode }) {
       stop = true
     }
   }, [pid])
+
+  // host gh auth state (the KiroCrew GitHub connector / `gh auth login`)
+  useEffect(() => {
+    let stop = false
+    getGhStatus().then((r) => !stop && setGhStatus(r)).catch(() => {})
+    return () => {
+      stop = true
+    }
+  }, [])
 
   const owner = remote && remote.owner
   const repo = remote && remote.repo
@@ -1639,6 +1659,22 @@ function CrewCockpit({ proj, onSetMode }) {
     }
   }
 
+  const hostRepo = async () => {
+    setHosting(true)
+    setHostErr("")
+    try {
+      const r = await hostOnGithub(pid, { repo: repoName, private: true, push: true })
+      setHostDone(r)
+      // origin is now set - re-read it so owner/repo populate and "Enable crew" unblocks
+      const fresh = await getGitRemote(pid)
+      setRemote(fresh)
+    } catch (e) {
+      setHostErr(e.message || String(e))
+    } finally {
+      setHosting(false)
+    }
+  }
+
   const counts = (radar && radar.counts) || {}
   const issues = (radar && radar.issues) || []
   const pulls = (radar && radar.pulls) || []
@@ -1680,8 +1716,65 @@ function CrewCockpit({ proj, onSetMode }) {
       h(GitBranch, { size: 13, style: { color: "#67e8f9" } }),
       owner && repo
         ? h("span", null, owner + "/" + repo, h("span", { style: { color: "#475569" } }, "  ·  origin"))
-        : h("span", { style: { color: "#fbbf24" } }, "no git origin - a crew needs a repo remote to bind to")
+        : h("span", { style: { color: "#fbbf24" } }, "no git origin - set one below to bind a crew")
     ),
+    // set up a GitHub origin (shown only while there is no origin remote yet)
+    !owner &&
+      !repo &&
+      h(
+        Card,
+        {
+          title: "Set up a GitHub origin",
+          icon: h(Github, { size: 14, style: { color: "#67e8f9" } }),
+          tone: "#67e8f9",
+        },
+        h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          ghStatus && !ghStatus.available
+            ? h(
+                "div",
+                { style: { fontSize: 12, color: "#fbbf24" } },
+                "the gh CLI is not installed - install it and run `gh auth login`, then retry")
+            : ghStatus && !ghStatus.authenticated
+              ? h(
+                  "div",
+                  { style: { fontSize: 12, color: "#fbbf24" } },
+                  "gh is not authenticated - connect GitHub in KiroCrew (Settings → Connections) or run `gh auth login` on this host, then refresh")
+              : null,
+          ghStatus &&
+            ghStatus.authenticated &&
+            h(
+              "div",
+              { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
+              h(Field, { label: "Repo (name or owner/name)" },
+                h("input", {
+                  style: { ...inputStyle, width: 240, flex: "0 0 auto" },
+                  value: repoName,
+                  onChange: (e) => setRepoName(e.target.value),
+                })
+              ),
+              h(
+                Button,
+                {
+                  onClick: hostRepo,
+                  disabled: hosting,
+                  title: "Create the GitHub repo (if missing), set it as the git origin, and push",
+                },
+                hosting
+                  ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })
+                  : h(Rocket, { size: 13 }),
+                "Create on GitHub + set origin + push")
+            ),
+          hostDone
+            ? h(
+                "div",
+                { style: { fontSize: 11.5, color: "#34d399" } },
+                "origin set to " + hostDone.url + (hostDone.pushed ? " (pushed)" : "") + " - you can now enable a crew")
+            : null,
+          hostErr ? h("div", { style: { fontSize: 11.5, color: "#f87171" } }, hostErr) : null
+        )
+      ),
     // status dashboard (crew mode, first-class)
     hasCrew &&
       h(
@@ -1741,7 +1834,7 @@ function CrewCockpit({ proj, onSetMode }) {
               title:
                 owner && repo
                   ? "Create a named crew on this repo and arm wake-on-new-work"
-                  : "greyed out: this folder has no git origin remote - run `git remote add origin <url>` first, a crew binds to a repo",
+                  : "greyed out: this folder has no git origin remote - use “Set up a GitHub origin” above to create the repo + set origin, a crew binds to a repo",
             },
             enabling
               ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })

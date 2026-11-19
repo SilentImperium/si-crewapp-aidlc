@@ -58,6 +58,12 @@ si-crewapp-aidlc/
 | POST | `/api/projects/<id>/git-init` | optional `git init` + first commit (job) |
 | GET | `/api/projects/<id>/files` | read-only folder tree (depth/node-capped, `.git` + noise dirs ignored) |
 | POST | `/api/projects/<id>/open-in-explorer` | open the folder (or a file inside it) in Explorer / file manager |
+| GET | `/api/gh-status` | host `gh` presence + auth (the KiroCrew GitHub connector / `gh auth login`) |
+| GET | `/api/projects/<id>/git-remote` | parse `owner`/`repo` from the project's `origin` remote |
+| POST | `/api/projects/<id>/host-on-github` | create the GitHub repo (if missing) + set `origin` + push (via host `gh` auth) |
+| POST | `/api/projects/<id>/issue` | open a GitHub issue (wakes the bound crew) |
+| POST | `/api/projects/<id>/mode` | set `solo`/`crew` mode (+ issue-radar crew pointer) |
+| POST | `/api/projects/<id>/open-terminal` | spawn a native terminal in the project folder |
 | GET | `/api/logs/tail` | `?after=<seq>&limit=<n>` |
 | GET | `/api/logs/stream` | SSE: `line` events, 15 s heartbeats |
 

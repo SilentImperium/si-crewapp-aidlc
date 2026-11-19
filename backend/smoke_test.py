@@ -132,6 +132,40 @@ def main():
         assert e.code == 400, "expected 400 for path escape, got %s" % e.code
     print("open-in-explorer path escape: rejected (400)")
 
+    # gh-status: host gh presence + auth (shape only - may be unauthenticated here)
+    st, gs = call("GET", "/api/gh-status")
+    assert st == 200 and isinstance(gs.get("available"), bool), "gh-status: %s" % gs
+    print("gh-status: available=%s authenticated=%s owner=%s" % (gs.get("available"), gs.get("authenticated"), gs.get("owner")))
+
+    # host-on-github: with an origin already set (a local bare repo) no gh create
+    # is needed, so this path is hermetic (no network / gh auth required).
+    probe = tempfile.mkdtemp(prefix="aidlc-host-")
+    bare = tempfile.mkdtemp(prefix="aidlc-bare-")
+    subprocess.run(["git", "init", "-q", probe], check=True)
+    subprocess.run(
+        ["git", "-C", probe, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "init"],
+        check=True,
+    )
+    subprocess.run(["git", "init", "-q", "--bare", bare], check=True)
+    subprocess.run(["git", "-C", probe, "remote", "add", "origin", bare], check=True)
+    st, p3 = call("POST", "/api/projects", {"name": "host", "path": probe, "create": False})
+    pid3 = p3["id"]
+    st, hg = call("POST", "/api/projects/%s/host-on-github" % pid3, {"repo": "x", "push": False})
+    assert st == 201 and hg.get("created") is False and hg.get("pushed") is False, "host-on-github: %s" % hg
+    print("host-on-github (origin set, no push): ok")
+
+    # a repo name with illegal characters is rejected with 400
+    try:
+        call("POST", "/api/projects/%s/host-on-github" % pid3, {"repo": "bad name!!", "push": False})
+        raise AssertionError("bad repo name was not rejected")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400, "expected 400 for bad repo name, got %s" % e.code
+    print("host-on-github bad name: rejected (400)")
+
+    call("DELETE", "/api/projects/%s" % pid3)
+    shutil.rmtree(probe, ignore_errors=True)
+    shutil.rmtree(bare, ignore_errors=True)
+
     print("ALL OK")
     proc.terminate()
     return 0

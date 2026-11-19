@@ -108,6 +108,129 @@ def git_remote(project_dir: str) -> dict:
     return out
 
 
+def _current_branch(project_dir: str) -> str:
+    """The project's current branch name (``main`` when detached)."""
+    code, raw = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], project_dir, 15)
+    b = raw.strip()
+    if code != 0 or not b or b == "HEAD":
+        return "main"
+    return b
+
+
+def _ensure_commit(project_dir: str) -> None:
+    """Make sure the repo has at least one commit (create one if it does not)."""
+    code, _ = _run(["git", "rev-parse", "--verify", "-q", "HEAD"], project_dir, 15)
+    if code == 0:
+        return  # already has commits
+    _run(["git", "add", "-A"], project_dir, 60)
+    _run(["git", "commit", "-q", "-m", "initial commit (AIDLC project)"], project_dir, 60)
+
+
+def gh_auth_status() -> dict:
+    """Whether the host ``gh`` CLI is present and authenticated, and its login.
+
+    ``gh`` reads its token from the host config (``~/.config/gh/hosts.yml``),
+    which the KiroCrew GitHub connector / ``gh auth login`` populates - so this
+    works even in the app backend's scrubbed env (no ``GITHUB_TOKEN`` passthrough).
+    """
+    out = {"available": False, "authenticated": False, "owner": None}
+    if not gh_available():
+        return out
+    out["available"] = True
+    try:
+        code, raw = _run(["gh", "api", "user", "--jq", ".login"], os.getcwd(), timeout=20)
+    except (subprocess.SubprocessError, OSError):
+        return out
+    login = raw.strip()
+    if code == 0 and login:
+        out["authenticated"] = True
+        out["owner"] = login
+    return out
+
+
+def host_on_github(
+    project_dir: str,
+    repo_name: str,
+    private: bool = True,
+    push: bool = True,
+) -> dict:
+    """Host the project folder on GitHub and wire it as the ``origin`` remote.
+
+    Ensures the folder is a git repo, creates the remote repo on GitHub (via the
+    host ``gh`` auth that the KiroCrew connector / ``gh auth login`` provides) if
+    it does not exist, sets ``origin`` to it, and optionally pushes the branch.
+    If an ``origin`` is already configured the remote-repo step is skipped (no
+    ``gh`` needed), so this is safe to re-run.
+    """
+    name = (repo_name or "").strip()
+    if not name:
+        raise ForgeError(400, "a repo name is required")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?", name):
+        raise ForgeError(400, "repo must be 'name' or 'owner/name'")
+
+    # ensure it is a git repo
+    inited = False
+    code, _ = _run(["git", "rev-parse", "--is-inside-work-tree"], project_dir, 15)
+    if code != 0:
+        code, raw = _run(["git", "init"], project_dir, 30)
+        if code != 0:
+            raise ForgeError(400, "not a git repo and git init failed: %s" % raw.strip()[-200:])
+        inited = True
+
+    # origin already configured? then no remote-repo work is needed
+    code, existing = _run(["git", "remote", "get-url", "origin"], project_dir, 15)
+    if code == 0 and existing.strip():
+        url = existing.strip()
+        owner, repo = _parse_remote(url)
+        if push:
+            _ensure_commit(project_dir)
+            branch = _current_branch(project_dir)
+            code, raw = _run(["git", "push", "-u", "origin", branch], project_dir, 120)
+            if code != 0:
+                raise ForgeError(422, "git push failed: %s" % raw.strip()[-300:])
+            return {"owner": owner, "repo": repo, "url": url, "created": False, "pushed": True, "branch": branch, "inited": inited}
+        return {"owner": owner, "repo": repo, "url": url, "created": False, "pushed": False, "branch": None, "inited": inited}
+
+    # no origin - create the remote repo via the host gh auth
+    if not gh_available():
+        raise ForgeError(409, "no git origin and the gh CLI is not on PATH - install gh and run `gh auth login`")
+    full = name
+    if "/" not in name:
+        code, owner_out = _run(["gh", "api", "user", "--jq", ".login"], project_dir, 20)
+        if code != 0 or not owner_out.strip():
+            raise ForgeError(409, "gh is not authenticated - run `gh auth login` (or connect GitHub in KiroCrew), then retry")
+        full = "%s/%s" % (owner_out.strip(), name)
+
+    created = False
+    code, _ = _run(["gh", "repo", "view", full], project_dir, 20)
+    if code != 0:
+        argv = ["gh", "repo", "create", full, "--quiet"]
+        if private:
+            argv.append("--private")
+        code, raw = _run(argv, project_dir, 60)
+        if code != 0:
+            raise ForgeError(422, "gh repo create failed: %s" % raw.strip()[-300:])
+        created = True
+
+    url = "https://github.com/%s.git" % full
+    code, _ = _run(["git", "remote", "add", "origin", url], project_dir, 15)
+    if code != 0:
+        code, raw = _run(["git", "remote", "set-url", "origin", url], project_dir, 15)
+        if code != 0:
+            raise ForgeError(500, "could not set git origin: %s" % raw.strip()[-200:])
+
+    branch = None
+    if push:
+        _ensure_commit(project_dir)
+        branch = _current_branch(project_dir)
+        code, raw = _run(["git", "push", "-u", "origin", branch], project_dir, 120)
+        if code != 0:
+            raise ForgeError(422, "git push failed: %s" % raw.strip()[-300:])
+
+    owner, repo = _parse_remote(url)
+    return {"owner": owner, "repo": repo, "url": url, "created": created, "pushed": bool(push), "branch": branch, "inited": inited}
+
+
 def create_issue(
     project_dir: str,
     title: str,

@@ -240,7 +240,7 @@ function LogConsole({ lines, autoScroll }) {
               style: {
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
-                color: l.text.startsWith("[si-crewapp-AIDLC]") ? "#67e8f9" : undefined,
+                color: l.text.startsWith("[si-crewapp-aidlc]") ? "#67e8f9" : undefined,
               },
             },
             l.text

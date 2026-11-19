@@ -1,5 +1,5 @@
 {
-  "name": "si-crewapp-AIDLC",
+  "name": "si-crewapp-aidlc",
   "version": "0.1.0",
   "displayName": "SI AIDLC",
   "description": "Folder-first AI-DLC studio for Windows and Linux: create a local project folder, let the app install and configure the aidlc CLI (harness, effort preset, workflow profile), watch doctor health and the live 5-phase stage map, and hand off to your harness when ready. The repo comes second, not first.",
@@ -14,7 +14,7 @@
     "entry": "index.mjs",
     "pages": [
       {
-        "route": "/apps/si-crewapp-AIDLC",
+        "route": "/apps/si-crewapp-aidlc",
         "label": "SI AIDLC",
         "icon": "Workflow"
       }
@@ -28,8 +28,8 @@
   },
   "permissions": {
     "api": [
-      "/apps/si-crewapp-AIDLC/api",
-      "/apps/si-crewapp-AIDLC/api/*"
+      "/apps/si-crewapp-aidlc/api",
+      "/apps/si-crewapp-aidlc/api/*"
     ]
   }
 }

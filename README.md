@@ -27,7 +27,7 @@ The app never mutates AI-DLC state, audit trails, or artifacts — the dashboard
 Follows the house conventions of `si-local-inferencing`:
 
 ```
-si-crewapp-AIDLC/
+si-crewapp-aidlc/
 ├── app.json            # KiroCrew manifest (os: windows + linux)
 ├── backend/server.py   # stdlib-only Python: ThreadingHTTPServer, HMAC proxy
 │                      #   verification, jobs, SSE log stream, state parser
@@ -37,7 +37,7 @@ si-crewapp-AIDLC/
 └── tools/make-icon.py  # stdlib-only PNG generator for the icon
 ```
 
-- **Backend** — stdlib only (the gateway spawns it with a scrubbed env). Drives the `aidlc` CLI via `subprocess` (PowerShell on Windows, POSIX sh on Linux), one job at a time, all output streamed to an SSE log ring. Persists projects under `KIROCREW_HOME/apps/si-crewapp-AIDLC/data/`.
+- **Backend** — stdlib only (the gateway spawns it with a scrubbed env). Drives the `aidlc` CLI via `subprocess` (PowerShell on Windows, POSIX sh on Linux), one job at a time, all output streamed to an SSE log ring. Persists projects under `KIROCREW_HOME/apps/si-crewapp-aidlc/data/`.
 - **UI** — no build step; React + lucide-react are injected by the KiroCrew host. Polls `/api/state` every 3 s, project state every 4 s, and streams CLI output over SSE with tail-polling fallback.
 - **State parsing** — read-only, best-effort: `aidlc-state.md`, `aidlc/spaces/<space>/intents/…`, `stage-graph.json`, `scope-grid.json`, `aidlc.settings.json`, audit shards. Unrecognized formats degrade to raw display.
 

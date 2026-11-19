@@ -12,7 +12,7 @@ Folder-first AI-DLC studio for Windows and Linux. The app:
     (read-only: this app never mutates AI-DLC state, audit or artifacts),
   * streams all CLI output to an SSE log.
 
-The Kiro Crew gateway reverse-proxies ``/apps/si-crewapp-AIDLC/api/*`` to this
+The Kiro Crew gateway reverse-proxies ``/apps/si-crewapp-aidlc/api/*`` to this
 server and signs every proxied request with an HMAC we verify before
 touching anything.
 
@@ -59,7 +59,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-APP_NAME = os.environ.get("KIROCREW_APP_NAME", "si-crewapp-AIDLC")
+APP_NAME = os.environ.get("KIROCREW_APP_NAME", "si-crewapp-aidlc")
 APP_VERSION = "0.1.0"
 PROXY_SECRET = os.environ.get("KIROCREW_PROXY_SECRET", "")
 MAX_SKEW_S = 60
@@ -137,7 +137,7 @@ def _load_state():
             if isinstance(d, dict):
                 STATE["projects"] = [p for p in d.get("projects", []) if isinstance(p, dict)]
         except Exception:
-            print("[si-crewapp-AIDLC] projects.json unreadable; starting fresh", flush=True)
+            print("[si-crewapp-aidlc] projects.json unreadable; starting fresh", flush=True)
     if JOBS_FILE.exists():
         try:
             for j in json.loads(JOBS_FILE.read_text()):
@@ -299,7 +299,7 @@ def create_project(d):
         }
         STATE["projects"].append(proj)
         _save_state()
-    _append_line("[si-crewapp-AIDLC] project added: %s (%s)" % (name, p))
+    _append_line("[si-crewapp-aidlc] project added: %s (%s)" % (name, p))
     return proj
 
 
@@ -318,7 +318,7 @@ def delete_project(pid):
         if len(STATE["projects"]) == before:
             raise ApiError(404, "no such project: %s" % pid)
         _save_state()
-    _append_line("[si-crewapp-AIDLC] project removed from registry: %s (folder untouched)" % pid)
+    _append_line("[si-crewapp-aidlc] project removed from registry: %s (folder untouched)" % pid)
     return {"ok": True}
 
 
@@ -358,14 +358,14 @@ def _finish_job(job, ok, summary, exit_code=None):
             JOB = None
         _save_jobs()
     _append_line(
-        "[si-crewapp-AIDLC] job %s %s: %s" % (job["kind"], job["status"], summary or "")
+        "[si-crewapp-aidlc] job %s %s: %s" % (job["kind"], job["status"], summary or "")
     )
     return job
 
 
 def _run_cmd(argv, cwd, timeout, label):
     """Run a command, streaming output to the log ring. Returns (exit_code, output)."""
-    _append_line("[si-crewapp-AIDLC] $ %s   (cwd: %s)" % (" ".join(argv), cwd))
+    _append_line("[si-crewapp-aidlc] $ %s   (cwd: %s)" % (" ".join(argv), cwd))
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -400,7 +400,7 @@ def _apply_preset(project_dir, preset, label="preset"):
         label,
     )
     if code != 0:
-        _append_line("[si-crewapp-AIDLC] preset not recorded (aidlc config models exited %d) - continuing" % code)
+        _append_line("[si-crewapp-aidlc] preset not recorded (aidlc config models exited %d) - continuing" % code)
     return code
 
 
@@ -423,7 +423,7 @@ def job_setup(job):
         if code != 0:
             return _finish_job(job, False, "aidlc config exited %d" % code, code)
         _apply_preset(p, preset)
-        _append_line("[si-crewapp-AIDLC] recorded preset=%s (default scope hint: %s - pass it at workflow start)" % (preset, scope))
+        _append_line("[si-crewapp-aidlc] recorded preset=%s (default scope hint: %s - pass it at workflow start)" % (preset, scope))
         dcode, dout = _run_cmd(["aidlc", "doctor"], p, 300, "doctor")
         with LOCK:
             proj["setup_done"] = True
@@ -496,7 +496,7 @@ def job_git_init(job):
                 ["git", "commit", "-m", "Initial commit (AI-DLC project)"], p, 300, "git-commit"
             )
             if code != 0:
-                _append_line("[si-crewapp-AIDLC] no commit created (nothing to commit?)")
+                _append_line("[si-crewapp-aidlc] no commit created (nothing to commit?)")
         with LOCK:
             proj["git"] = True
             proj["updated_at"] = time.time()
@@ -1012,7 +1012,7 @@ def main():
     port = int(os.environ.get("PORT") or "9148")
     _load_state()
     SERVER = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    _append_line("[si-crewapp-AIDLC] backend started (pid %d, port %d, %s)" % (os.getpid(), port, "windows" if IS_WINDOWS else "linux"))
+    _append_line("[si-crewapp-aidlc] backend started (pid %d, port %d, %s)" % (os.getpid(), port, "windows" if IS_WINDOWS else "linux"))
     import signal
 
     signal.signal(signal.SIGTERM, _handle_term)

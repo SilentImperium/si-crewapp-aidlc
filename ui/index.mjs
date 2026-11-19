@@ -275,7 +275,6 @@ const NEON_CSS = `
 .aidlc-root {
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
   background-color: #05060f;
   background-image:
     radial-gradient(1200px 620px at 18% -8%, rgba(34,211,238,.17), transparent 62%),
@@ -339,6 +338,13 @@ const NEON_CSS = `
   0%   { top: -15%; }
   100% { top: 115%; }
 }
+.aidlc-scan-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 40;
+}
 .aidlc-scanline {
   position: absolute;
   left: 0;
@@ -347,7 +353,6 @@ const NEON_CSS = `
   height: 140px;
   background: linear-gradient(180deg, transparent, rgba(34,211,238,.06) 45%, rgba(168,85,247,.05) 55%, transparent);
   pointer-events: none;
-  z-index: 40;
   animation: aidlc-scan 10s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2385,7 +2390,8 @@ export default function SiCrewappAidlcApp() {
         style: { width: "100%" },
       },
       h(NeonStyles),
-      h("div", { className: "aidlc-scanline", "aria-hidden": true }),
+      h("div", { className: "aidlc-scan-clip", "aria-hidden": true },
+        h("div", { className: "aidlc-scanline" })),
       // header
       h(
         "div",

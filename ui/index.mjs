@@ -679,13 +679,21 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
   return h(
     "div",
     { style: { display: "flex", flexDirection: "column", gap: 16 } },
-    // section label
+    // page title bar
     h(
       "div",
-      { style: { display: "flex", alignItems: "baseline", gap: 10 } },
-      h("span", { style: { fontSize: 14, fontWeight: 700, color: "#e2e8f0" } }, "All projects"),
+      {
+        style: {
+          display: "flex",
+          alignItems: "baseline",
+          gap: 10,
+          paddingBottom: 8,
+          borderBottom: "1px solid rgba(148,163,184,.18)",
+        },
+      },
+      h("span", { style: { fontSize: 18, fontWeight: 700, color: "#e2e8f0", letterSpacing: ".01em" } }, "Project Management"),
       h("span", { style: { fontSize: 11.5, color: "#64748b" } },
-        projects.length ? `${projects.length} tracked · your AI-DLC portfolio` : "your AI-DLC portfolio")
+        projects.length ? `${projects.length} tracked in your AI-DLC portfolio` : "your AI-DLC portfolio")
     ),
     // add project
     h(
@@ -717,6 +725,14 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
         "create the folder if it does not exist"),
       h(Button, { onClick: onAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
     ),
+    // all projects label - just above the list itself
+    projects.length > 0 &&
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 } },
+        h("span", { style: { fontSize: 13, fontWeight: 700, color: "#e2e8f0" } }, "All Projects"),
+        h("span", { style: { fontSize: 11, color: "#64748b" } }, `${projects.length} tracked`)
+      ),
     // project cards
     projects.length === 0
       ? h("div", { style: { fontSize: 12.5, color: "#64748b", padding: "4px 2px" } },
@@ -821,7 +837,7 @@ function WorkingView({
     h(
       "div",
       { style: { display: "flex", alignItems: "center", gap: 10 } },
-      h(Button, { kind: "ghost", small: true, onClick: onBack }, h(ArrowLeft, { size: 13 }), "All projects"),
+      h(Button, { kind: "ghost", onClick: onBack }, h(ArrowLeft, { size: 14 }), "Project Management"),
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: 18, fontWeight: 700 } }, proj.name),
         h(

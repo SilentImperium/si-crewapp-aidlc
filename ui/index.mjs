@@ -35,6 +35,8 @@ import {
   createIssue,
   setMode,
   openTerminal,
+  getProjectFiles,
+  openInExplorer,
   radarCrews,
   radarCrew,
   radarCreateCrew,
@@ -70,6 +72,9 @@ const {
   ListChecks,
   MessageSquare,
   Zap,
+  File,
+  FolderOpen,
+  RefreshCw,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -840,9 +845,10 @@ function missingSetup(pstate) {
   if (!cli.aidlc || !cli.aidlc.installed)
     items.push("aidlc CLI is not installed - use “Install CLI” in the setup wizard")
   if (!pstate.settings) items.push("aidlc.settings.json is missing")
-  if (!pstate.stamp) items.push("the .aidlc/ engine hasn’t been generated (run setup)")
-  if (pstate.project && !pstate.project.git) items.push("the folder is not a git repository")
-  if (items.length === 0) items.push("run the setup wizard to generate the .aidlc/ engine")
+  if (!pstate.stamp) items.push("the .aidlc/ engine hasn’t been generated - run the setup wizard")
+  if (pstate.project && !pstate.project.git)
+    items.push("the folder is not a git repository (optional - “Make it a git repo” when ready)")
+  if (items.length === 0) items.push("no gaps detected - the engine is already on disk, status will refresh")
   return items
 }
 
@@ -904,6 +910,170 @@ function SetupTip({ items }) {
 }
 
 // ---------------------------------------------------------------------------
+// file tree (right-hand column) - the project's folder structure, read-only.
+// Manual refresh only: it loads when the project opens and on the refresh
+// button. Clicking a folder toggles it; clicking a file opens it with the OS
+// default app (open-in-explorer).
+
+const AIDLC_NAMES = new Set([".aidlc", "aidlc", "aidlc.settings.json", "AGENTS.md"])
+
+function fmtSize(n) {
+  if (n == null) return ""
+  if (n < 1024) return n + " B"
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"
+  return (n / 1024 / 1024).toFixed(1) + " MB"
+}
+
+// One recursive level of tree rows.
+function TreeRows({ node, depth, open, onToggle, onOpenPath }) {
+  if (!node.children || !node.children.length) return null
+  return h(
+    "div",
+    null,
+    node.children.map((c) => {
+      const isDir = c.type === "dir"
+      const expanded = !!open[c.path]
+      const hot = AIDLC_NAMES.has(c.name)
+      return h(
+        "div",
+        { key: c.path },
+        h(
+          "div",
+          {
+            onClick: () => (isDir ? onToggle(c.path) : onOpenPath(c.path)),
+            title: isDir ? c.path : "open " + c.path,
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "2px 6px",
+              paddingLeft: 6 + depth * 12,
+              cursor: "pointer",
+              borderRadius: 5,
+              fontSize: 11.5,
+              fontFamily: MONO,
+              color: hot ? "#34d399" : "#cbd5e1",
+              userSelect: "none",
+            },
+          },
+          isDir
+            ? h(ChevronRight, {
+                size: 11,
+                style: {
+                  transform: expanded ? "rotate(90deg)" : "none",
+                  transition: "transform .12s",
+                  color: "#64748b",
+                  flexShrink: 0,
+                },
+              })
+            : h("span", { style: { width: 11, flexShrink: 0 } }),
+          isDir
+            ? h(Folder, { size: 12, style: { color: hot ? "#34d399" : "#67e8f9", flexShrink: 0 } })
+            : h(File, { size: 12, style: { color: "#64748b", flexShrink: 0 } }),
+          h(
+            "span",
+            { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+            c.name
+          ),
+          !isDir && c.size != null
+            ? h(
+                "span",
+                { style: { marginLeft: "auto", fontSize: 10, color: "#475569", flexShrink: 0 } },
+                fmtSize(c.size)
+              )
+            : null
+        ),
+        isDir && expanded ? h(TreeRows, { node: c, depth: depth + 1, open, onToggle, onOpenPath }) : null
+      )
+    })
+  )
+}
+
+function FileTree({ pid, onOpenPath }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState("")
+  const [open, setOpen] = useState({})
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setErr("")
+    try {
+      const r = await getProjectFiles(pid)
+      setData(r)
+      // auto-expand the top level so the tree is useful on arrival
+      const o = {}
+      for (const c of ((r && r.tree && r.tree.children) || [])) {
+        if (c.type === "dir") o[c.path] = true
+      }
+      setOpen(o)
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [pid])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const toggle = (path) => setOpen((o) => ({ ...o, [path]: !o[path] }))
+
+  return h(
+    Card,
+    {
+      title: "Files",
+      icon: h(Folder, { size: 14, style: { color: "#67e8f9" } }),
+      actions: h(
+        "div",
+        { style: { display: "flex", gap: 4 } },
+        h(
+          Button,
+          {
+            kind: "ghost",
+            small: true,
+            title: "Open the project folder in Explorer (Windows) / file manager (Linux)",
+            onClick: () => onOpenPath(null),
+          },
+          h(FolderOpen, { size: 12 }),
+          "Open"
+        ),
+        h(
+          Button,
+          { kind: "ghost", small: true, title: "Refresh the file tree", onClick: load, disabled: loading },
+          loading
+            ? h(LoaderCircle, { size: 12, style: { animation: "spin 1.2s linear infinite" } })
+            : h(RefreshCw, { size: 12 })
+        )
+      ),
+    },
+    err
+      ? h("div", { style: { fontSize: 11.5, color: "#f87171" } }, err)
+      : !data
+        ? h("div", { style: { fontSize: 11.5, color: "#64748b" } }, loading ? "loading files…" : "no data yet")
+        : h(
+            "div",
+            {
+              style: {
+                maxHeight: 420,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+              },
+            },
+            h(TreeRows, { node: data.tree, depth: 0, open, onToggle: toggle, onOpenPath }),
+            data.truncated &&
+              h(
+                "div",
+                { style: { fontSize: 10.5, color: "#64748b", padding: "4px 6px" } },
+                "showing the first " + data.count + " entries (truncated)"
+              )
+          )
+  )
+}
+
+// ---------------------------------------------------------------------------
 // WORKING view - "the current project" (focused, one at a time)
 
 function WorkingView({
@@ -924,10 +1094,17 @@ function WorkingView({
   setAutoScroll,
 }) {
   const [termErr, setTermErr] = useState("")
+  const [explorerErr, setExplorerErr] = useState("")
   const openTerm = (command) => {
     setTermErr("")
     openTerminal(proj.id, command).catch((e) =>
       setTermErr("terminal: " + (e && e.message ? e.message : String(e)))
+    )
+  }
+  const openPath = (rel) => {
+    setExplorerErr("")
+    openInExplorer(proj.id, rel).catch((e) =>
+      setExplorerErr("explorer: " + (e && e.message ? e.message : String(e)))
     )
   }
   return h(
@@ -975,9 +1152,9 @@ function WorkingView({
             h(
               "div",
               { style: { display: "flex", alignItems: "center", gap: 7 } },
-              h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
-                pstate.setup_done ? "set up" : "needs setup"),
-              !pstate.setup_done && h(SetupTip, { items: missingSetup(pstate) })
+              h(Chip, { tone: pstate.project.setup_done ? "#34d399" : "#fbbf24" },
+                pstate.project.setup_done ? "set up" : "needs setup"),
+              !pstate.project.setup_done && h(SetupTip, { items: missingSetup(pstate) })
             ),
           // native terminal, OUTSIDE the app (Windows Terminal / PowerShell)
           h(
@@ -1009,11 +1186,24 @@ function WorkingView({
                 },
                 h(Rocket, { size: 13 }),
                 "Launch harness"
-              )
-          ),
-          termErr &&
-            h("span", { style: { fontSize: 11, color: "#f87171" } }, termErr)
+              ),
+            h(
+              Button,
+              {
+                small: true,
+                kind: "ghost",
+                title: "Open the project folder in Explorer (Windows) / file manager (Linux)",
+                onClick: () => openPath(null),
+              },
+              h(FolderOpen, { size: 13 }),
+              "Open folder"
+            ),
+            termErr &&
+              h("span", { style: { fontSize: 11, color: "#f87171" } }, termErr),
+            explorerErr &&
+              h("span", { style: { fontSize: 11, color: "#f87171" } }, explorerErr)
         )
+      ),
       ),
       // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
       !proj.setup_done
@@ -1045,6 +1235,12 @@ function WorkingView({
           ),
         h(LogConsole, { lines, autoScroll })
       )
+    ),
+    // right column: the project's folder tree + open-in-explorer
+    h(
+      "div",
+      { style: { flex: "0 0 280px", width: 280, display: "flex", flexDirection: "column", gap: 12 } },
+      h(FileTree, { pid: proj.id, onOpenPath: openPath })
     )
   )
 }
@@ -1539,7 +1735,14 @@ function CrewCockpit({ proj, onSetMode }) {
             })),
           h(
             Button,
-            { onClick: enableCrew, disabled: enabling || !owner || !repo },
+            {
+              onClick: enableCrew,
+              disabled: enabling || !owner || !repo,
+              title:
+                owner && repo
+                  ? "Create a named crew on this repo and arm wake-on-new-work"
+                  : "greyed out: this folder has no git origin remote - run `git remote add origin <url>` first, a crew binds to a repo",
+            },
             enabling
               ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })
               : h(Zap, { size: 13 }),

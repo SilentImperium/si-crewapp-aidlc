@@ -17,7 +17,7 @@ The idea: you start with a plain local folder, not a repository. The app finds (
 
    You see a preview of the three ownership domains (`.aidlc/` engine, `<harness>/` glue, `aidlc/` workspace) *before* anything runs.
 4. **Doctor** — `aidlc doctor` runs automatically after setup; re-run any time.
-5. **Dashboard** — stage map (effective plan for the active scope), current stage, open questions, audit tail, settings summary, and a harness handoff command.
+5. **Dashboard** — stage map (effective plan for the active scope), current stage, open questions, audit tail, settings summary, a harness handoff command, a live folder tree (right-hand column), and one-click "open folder / open file" in the OS Explorer (Windows) or file manager (Linux).
 6. **Optional git** — “Make it a git repo” (`git init` + first commit) when you're ready.
 
 The app never mutates AI-DLC state, audit trails, or artifacts — the dashboard is observation only; the work happens in your harness conversation.
@@ -56,6 +56,8 @@ si-crewapp-aidlc/
 | POST | `/api/projects/<id>/doctor` | run `aidlc doctor` now |
 | GET | `/api/projects/<id>/state` | read-only dashboard state |
 | POST | `/api/projects/<id>/git-init` | optional `git init` + first commit (job) |
+| GET | `/api/projects/<id>/files` | read-only folder tree (depth/node-capped, `.git` + noise dirs ignored) |
+| POST | `/api/projects/<id>/open-in-explorer` | open the folder (or a file inside it) in Explorer / file manager |
 | GET | `/api/logs/tail` | `?after=<seq>&limit=<n>` |
 | GET | `/api/logs/stream` | SSE: `line` events, 15 s heartbeats |
 

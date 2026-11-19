@@ -12,10 +12,13 @@ import hashlib
 import hmac
 import json
 import os
+import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -95,6 +98,39 @@ def main():
     st, ot2 = call("POST", "/api/projects/%s/open-terminal" % pid, {"command": "echo aidlc-e2e-ok"})
     assert st == 200 and ot2.get("ok"), "open-terminal (cmd) status %s: %s" % (st, ot2)
     print("open-terminal with command: ok")
+
+    # files: read-only tree - noise dirs ignored, dirs first, nested walk works
+    probe_dir = tempfile.mkdtemp(prefix="aidlc-files-")
+    (pathlib.Path(probe_dir) / ".git").mkdir()
+    (pathlib.Path(probe_dir) / "node_modules").mkdir()
+    (pathlib.Path(probe_dir) / "src").mkdir()
+    (pathlib.Path(probe_dir) / "src" / "main.py").write_text("print('hi')\n")
+    (pathlib.Path(probe_dir) / "AGENTS.md").write_text("# agents\n")
+    st, p2 = call("POST", "/api/projects", {"name": "ftree", "path": probe_dir, "create": False})
+    pid2 = p2["id"]
+    st, f2 = call("GET", "/api/projects/%s/files" % pid2)
+    assert st == 200 and f2.get("tree", {}).get("type") == "dir", "files status %s: %s" % (st, f2)
+    top = {c["name"] for c in f2["tree"].get("children", [])}
+    assert top == {"src", "AGENTS.md"}, "files top-level (noise ignored): %s" % sorted(top)
+    src = next(c for c in f2["tree"]["children"] if c["name"] == "src")
+    assert [c["name"] for c in src.get("children", [])] == ["main.py"], "files nested: %s" % src
+    call("DELETE", "/api/projects/%s" % pid2)
+    shutil.rmtree(probe_dir, ignore_errors=True)
+    print("files: tree ok (.git/node_modules ignored, nested walk ok)")
+
+    # open-in-explorer: spawns the OS file manager (a window opens - harmless)
+    st, oe = call("POST", "/api/projects/%s/open-in-explorer" % pid, {"path": None})
+    assert st == 200 and oe.get("ok"), "open-in-explorer status %s: %s" % (st, oe)
+    assert oe.get("launcher"), "no launcher reported: %s" % oe
+    print("open-in-explorer:", oe["launcher"])
+
+    # a subpath that escapes the project folder must be rejected with 400
+    try:
+        call("POST", "/api/projects/%s/open-in-explorer" % pid, {"path": "../.."})
+        raise AssertionError("path escape was not rejected")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400, "expected 400 for path escape, got %s" % e.code
+    print("open-in-explorer path escape: rejected (400)")
 
     print("ALL OK")
     proc.terminate()

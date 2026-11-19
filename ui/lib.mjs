@@ -54,6 +54,13 @@ export const tailLogs = (after, limit) =>
 export const getGitRemote = (pid) => http("GET", `projects/${pid}/git-remote`)
 export const createIssue = (pid, d) => http("POST", `projects/${pid}/issue`, d)
 export const setMode = (pid, mode, crew) => http("POST", `projects/${pid}/mode`, { mode, crew })
+// Read-only folder tree for the project's right-hand file column (capped,
+// .git and other noise dirs ignored server-side).
+export const getProjectFiles = (pid) => http("GET", `projects/${pid}/files`)
+// Open the project folder - or a file/folder inside it (relative `path`) - in
+// the OS file manager / default app (Explorer on Windows, xdg-open on Linux).
+export const openInExplorer = (pid, path) =>
+  http("POST", `projects/${pid}/open-in-explorer`, { path: path ?? null })
 // Open a native terminal window OUTSIDE the app (Windows Terminal, else a
 // detached PowerShell console) in the project folder, optionally running the
 // harness command. The window is fully detached - it outlives the app.

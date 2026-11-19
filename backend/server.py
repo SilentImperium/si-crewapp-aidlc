@@ -28,6 +28,8 @@ Endpoints (as seen by the gateway, which prepends /api/):
   POST   /api/projects/<id>/doctor   run aidlc doctor now
   GET    /api/projects/<id>/state    read-only dashboard state
   POST   /api/projects/<id>/git-init  optional git init + first commit (job)
+  GET    /api/projects/<id>/files     read-only folder tree (capped, .git ignored)
+  POST   /api/projects/<id>/open-in-explorer  open folder/file in Explorer / file manager
   GET    /api/logs/tail           ?after=<seq>&limit=<n>
   GET    /api/logs/stream         SSE: "line" events, 15s heartbeats
 
@@ -107,6 +109,15 @@ LAUNCH_SPECS = {
     "cursor": {"cmd": None, "hint": "Open the project in Cursor, then run /aidlc"},
     "copilot": {"cmd": None, "hint": "Open the project in GitHub Copilot Chat, then run /aidlc"},
 }
+
+#: Directory names that never help in a folder tree and can be enormous.
+IGNORED_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
+    "dist", "build", ".next", "target", ".gradle", ".mypy_cache",
+    ".pytest_cache", ".cache", ".idea", ".vscode", ".DS_Store",
+}
+FILES_MAX_DEPTH = 8     # directory levels below the project root
+FILES_MAX_NODES = 2000  # hard cap on tree entries per request
 
 INSTALL_CMD = (
     "powershell -NoProfile -Command \"irm https://github.com/awslabs/aidlc-workflows/releases/latest/download/install.ps1 | iex\""
@@ -681,6 +692,23 @@ def project_state(pid):
     graph = _normalize_stage_graph(_read_json(p / ".aidlc" / "tools" / "data" / "stage-graph.json"))
     grid = _normalize_scope_grid(_read_json(p / ".aidlc" / "tools" / "data" / "scope-grid.json"))
 
+    # Reconcile the persisted registry flags with the disk. Setup may have
+    # happened outside the app (a plain `aidlc config` in a terminal), which
+    # leaves `setup_done`/`git` stale; the on-disk state is the source of
+    # truth. Backfill only on transition so the 4 s dashboard poll stays cheap.
+    disk_git = (p / ".git").is_dir()
+    with LOCK:
+        changed = False
+        if stamp and not proj.get("setup_done"):
+            proj["setup_done"] = True
+            changed = True
+        if disk_git != bool(proj.get("git")):
+            proj["git"] = disk_git
+            changed = True
+        if changed:
+            proj["updated_at"] = time.time()
+            _save_state()
+
     space = "default"
     raw_space = _read_text(p / "aidlc" / "active-space", 64)
     if raw_space and raw_space.strip():
@@ -777,6 +805,113 @@ def project_state(pid):
         "launch_hint": launch_hint,
         "at": time.time(),
     }
+
+
+def _list_children(d: Path, rel: str, depth: int, counter: list, truncated: list) -> list:
+    """Build *d*'s children list: dirs first, case-insensitive alpha.
+
+    ``rel`` is *d*'s own relative path ("" for the project root). The counter
+    and truncated flag are threaded through so the whole walk stays under the
+    node cap; ``depth`` is the level of the children being listed (1 = root's
+    direct children).
+    """
+    if depth > FILES_MAX_DEPTH:
+        truncated[0] = True
+        return []
+    try:
+        entries = sorted(d.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+    except OSError:
+        return []
+    out = []
+    for e in entries:
+        if e.name in IGNORED_DIRS:
+            continue
+        counter[0] += 1
+        if counter[0] > FILES_MAX_NODES:
+            truncated[0] = True
+            break
+        rel_path = e.name if not rel else rel + "/" + e.name
+        node = {"name": e.name, "path": rel_path, "type": "dir" if e.is_dir() else "file"}
+        if node["type"] == "dir":
+            node["children"] = _list_children(e, rel_path, depth + 1, counter, truncated)
+        else:
+            try:
+                node["size"] = e.stat().st_size
+            except OSError:
+                pass
+        out.append(node)
+    return out
+
+
+def project_files(pid):
+    """Read-only folder tree for the dashboard's right-hand file column."""
+    proj = get_project(pid)
+    root = Path(proj["path"])
+    if not root.is_dir():
+        raise ApiError(404, "project folder no longer exists: %s" % root)
+    counter = [0]
+    truncated = [False]
+    children = _list_children(root, "", 1, counter, truncated)
+    return {
+        "root": proj["path"],
+        "count": counter[0],
+        "truncated": truncated[0],
+        "tree": {"name": root.name, "path": "", "type": "dir", "children": children},
+    }
+
+
+def open_in_explorer(pid, sub=None):
+    """Open the project folder - or a file/folder inside it - in the OS.
+
+    Windows: folders in Explorer, files with their default app (``start``).
+    Linux:   folders in the file manager (``xdg-open``, else nautilus/dolphin/
+             thunar/nemo), files with ``xdg-open``. ``sub`` is a project-
+    relative path, confined to the project root.
+    """
+    proj = get_project(pid)
+    root = Path(os.path.expanduser(proj["path"])).resolve()
+    target = root
+    if sub:
+        target = (root / str(sub)).resolve()
+    if target != root and root not in target.parents:
+        raise ApiError(400, "path escapes the project folder")
+    if not target.exists():
+        raise ApiError(404, "no such file or folder: %s" % (sub or root))
+
+    devnull = subprocess.DEVNULL
+    if IS_WINDOWS:
+        if target.is_dir():
+            subprocess.Popen(["explorer", str(target)], close_fds=True)
+            launcher = "explorer"
+        else:
+            os.startfile(str(target))  # opens with the default app for the type
+            launcher = "startfile"
+    else:
+        if target.is_dir():
+            launcher = None
+            for fm in ("xdg-open", "nautilus", "dolphin", "thunar", "nemo"):
+                if shutil.which(fm):
+                    subprocess.Popen(
+                        [fm, str(target)],
+                        close_fds=True,
+                        stdin=devnull, stdout=devnull, stderr=devnull,
+                    )
+                    launcher = fm
+                    break
+            if launcher is None:
+                raise ApiError(404, "no file manager found (install nautilus or xdg-utils)")
+        else:
+            if not shutil.which("xdg-open"):
+                raise ApiError(404, "xdg-open not found - cannot open files on this machine")
+            subprocess.Popen(
+                ["xdg-open", str(target)],
+                close_fds=True,
+                stdin=devnull, stdout=devnull, stderr=devnull,
+            )
+            launcher = "xdg-open"
+
+    _append_line("[si-crewapp-aidlc] opened %s in %s" % (target, launcher))
+    return {"ok": True, "launcher": launcher, "target": str(target)}
 
 
 # ---------------------------------------------------------------------------
@@ -930,6 +1065,13 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"projects/([^/]+)/git-init", api)
             if m and method == "POST":
                 return self._json(202, start_job("git-init", m.group(1)))
+            m = re.fullmatch(r"projects/([^/]+)/files", api)
+            if m and method == "GET":
+                return self._json(200, project_files(m.group(1)))
+            m = re.fullmatch(r"projects/([^/]+)/open-in-explorer", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                return self._json(200, open_in_explorer(m.group(1), d.get("path")))
             if method == "GET" and api == "logs/tail":
                 return self._json(200, tail_logs(qs))
             if method == "GET" and api == "logs/stream":

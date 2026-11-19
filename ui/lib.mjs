@@ -143,6 +143,11 @@ export const radarIssues = (owner, repo, provider, host) =>
 export const radarPulls = (owner, repo, provider, host) =>
   radarFetch("GET", `/pulls?${radarQ(owner, repo, provider, host)}`)
 
+// List the repos connected in issue-radar (the connect switcher's source).
+// The UI uses this to badge "Connected to Issue Radar": a repo is connected iff
+// its owner/repo appears in the returned list. Returns { repos: [...] }.
+export const radarRepos = () => radarFetch("GET", "/repos")
+
 // Live log stream.
 //
 // Opens an EventSource against /logs/stream. The gateway's per-request timeout

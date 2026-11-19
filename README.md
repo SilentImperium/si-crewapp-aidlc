@@ -18,7 +18,8 @@ The idea: you start with a plain local folder, not a repository. The app finds (
    You see a preview of the three ownership domains (`.aidlc/` engine, `<harness>/` glue, `aidlc/` workspace) *before* anything runs.
 4. **Doctor** — `aidlc doctor` runs automatically after setup; re-run any time.
 5. **Dashboard** — stage map (effective plan for the active scope), current stage, open questions, audit tail, settings summary, a harness handoff command, a live folder tree (right-hand column), and one-click "open folder / open file" in the OS Explorer (Windows) or file manager (Linux).
-6. **Optional git** — “Make it a git repo” (`git init` + first commit) when you're ready.
+6. **Status** — a mini red/amber/green panel: *Connected to GitHub* (git repo + `origin` + host `gh` auth), *Connected to Issue Radar* (the repo is registered in the issue-radar app), and a dot per harness (set up / not). Un-deployed harnesses get a one-click **Deploy** (`aidlc config --harness <h>`). A project can be deployed for **several harnesses at once** (they coexist on disk), and the terminal **Launch** picker picks which one to start.
+7. **Optional git** — “Make it a git repo” (`git init` + first commit) when you're ready.
 
 The app never mutates AI-DLC state, audit trails, or artifacts — the dashboard is observation only; the work happens in your harness conversation.
 

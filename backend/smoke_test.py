@@ -81,6 +81,15 @@ def main():
     assert st == 200 and gr.get("owner"), "git-remote: %s" % gr
     print("git-remote:", gr)
 
+    # project_state now exposes the mini status-dashboard inputs:
+    # github (is_git/has_origin/owner/repo) + harnesses (all/deployed/launch).
+    st, ps = call("GET", "/api/projects/%s/state" % pid)
+    assert st == 200 and ps.get("github") and ps.get("harnesses"), "state missing github/harnesses: %s" % ps
+    assert ps["github"].get("owner") == gr.get("owner"), "state.github.owner: %s" % ps["github"]
+    assert "kiro" in ps["harnesses"]["all"] and isinstance(ps["harnesses"]["deployed"], list), "state.harnesses: %s" % ps["harnesses"]
+    assert "kiro" in ps["harnesses"]["launch"], "state.harnesses.launch: %s" % ps["harnesses"]
+    print("state: github + harnesses ok (github.owner=%s, %d harnesses)" % (ps["github"].get("owner"), len(ps["harnesses"]["all"])))
+
     # mode: solo -> crew (with a crew ref) -> solo (crew cleared)
     st, m = call("POST", "/api/projects/%s/mode" % pid, {"mode": "crew", "crew": {"id": "c1", "name": "t-crew", "owner": "o", "repo": "r"}})
     assert st == 200 and m["mode"] == "crew" and m["crew"]["id"] == "c1", "mode set: %s" % m

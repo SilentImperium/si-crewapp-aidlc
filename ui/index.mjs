@@ -46,6 +46,7 @@ import {
   radarCrewSettings,
   radarIssues,
   radarPulls,
+  radarRepos,
 } from "./lib.mjs"
 
 const React = window.__kirocrew_modules.react
@@ -1077,6 +1078,125 @@ function FileTree({ pid, onOpenPath }) {
 }
 
 // ---------------------------------------------------------------------------
+// STATUS dashboard - a compact red/amber/green "is this project ready?" panel:
+// GitHub connection, Issue-Radar connection, and per-harness setup. The GitHub
+// dot folds in the host `gh` auth state (/api/gh-status); the Issue-Radar dot
+// checks the repo against issue-radar's connected list (/repos); the harness
+// dots show which of the known harnesses are deployed, with a Deploy action for
+// the missing ones.
+const DOT = { green: "#34d399", amber: "#fbbf24", red: "#f87171" }
+
+function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
+  const [ghStatus, setGhStatus] = useState(null)
+  const [repos, setRepos] = useState(null)
+
+  useEffect(() => {
+    let stop = false
+    const tick = () => {
+      getGhStatus().then((r) => !stop && setGhStatus(r)).catch(() => {})
+      // poll so the Issue-Radar dot turns green once the repo gets connected
+      radarRepos().then((r) => !stop && setRepos(r.repos || [])).catch(() => !stop && setRepos([]))
+    }
+    tick()
+    const t = setInterval(tick, 10000)
+    return () => {
+      stop = true
+      clearInterval(t)
+    }
+  }, [])
+
+  const gh = (pstate && pstate.github) || {}
+  const owner = gh.owner
+  const repo = gh.repo
+
+  // GitHub dot: green = git repo + origin + gh authed; amber = git repo missing
+  // an origin OR gh not authed; red = not a git repo at all.
+  let ghDot, ghSub
+  if (!gh.is_git) {
+    ghDot = DOT.red
+    ghSub = "not a git repo"
+  } else if (!gh.has_origin) {
+    ghDot = DOT.amber
+    ghSub = "git repo, no origin remote"
+  } else if (ghStatus && !ghStatus.authenticated) {
+    ghDot = DOT.amber
+    ghSub = (owner || "?") + "/" + (repo || "?") + " · gh not authed"
+  } else {
+    ghDot = DOT.green
+    ghSub = (owner || "?") + "/" + (repo || "?") + (ghStatus && ghStatus.owner ? " · @" + ghStatus.owner : "")
+  }
+
+  // Issue-Radar dot: green = repo is in issue-radar's connected list; amber =
+  // has an origin (connectable) but not connected; red = no origin to connect.
+  const connected = !!(repos && owner && repo && repos.some((r) => r.owner === owner && r.repo === repo))
+  let irDot, irSub
+  if (!gh.has_origin) {
+    irDot = DOT.red
+    irSub = "no origin to connect"
+  } else if (connected) {
+    irDot = DOT.green
+    irSub = owner + "/" + repo + " connected"
+  } else {
+    irDot = DOT.amber
+    irSub = (owner || "?") + "/" + (repo || "?") + " not connected"
+  }
+
+  // Harnesses: one row per known harness, green = deployed, red = not.
+  const H = (pstate && pstate.harnesses) || { all: [], deployed: [], launch: {} }
+  const deployed = new Set(H.deployed || [])
+  const preset = (proj && proj.preset) || "balanced"
+  const scope = (proj && proj.scope) || "express"
+
+  const row = (key, dot, label, sub, extra) =>
+    h(
+      "div",
+      { key, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12 } },
+      h(Dot, { tone: dot }),
+      h("span", { style: { fontWeight: 600, color: "#e2e8f0", minWidth: 116 } }, label),
+      h("span", { style: { color: "#64748b", flex: 1, fontFamily: MONO, fontSize: 11 } }, sub),
+      extra
+    )
+
+  const children = [
+    row("gh", ghDot, "GitHub", ghSub),
+    row("ir", irDot, "Issue Radar", irSub),
+    h("div", { key: "sep", style: { height: 1, background: "rgba(148,163,184,.15)", margin: "2px 0" } }),
+  ]
+  ;(H.all || []).forEach((hh) => {
+    const isDep = deployed.has(hh)
+    const launch = (H.launch || {})[hh] || {}
+    children.push(
+      row(
+        "hh-" + hh,
+        isDep ? DOT.green : DOT.red,
+        hh,
+        isDep ? "set up" : "not set up",
+        !isDep
+          ? h(
+              Button,
+              {
+                kind: "ghost",
+                small: true,
+                onClick: () => onRunSetup && onRunSetup(hh, preset, scope),
+                disabled: !!busy,
+                title: "Run `aidlc config --harness " + hh + "` to deploy it here",
+              },
+              "Deploy")
+          : launch.hint
+            ? h("span", { style: { fontSize: 10.5, color: "#64748b" } }, launch.hint)
+            : null
+      )
+    )
+  })
+
+  return h(
+    Card,
+    { title: "Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }) },
+    h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, children)
+  )
+}
+
+// ---------------------------------------------------------------------------
 // WORKING view - "the current project" (focused, one at a time)
 
 function WorkingView({
@@ -1098,6 +1218,8 @@ function WorkingView({
 }) {
   const [termErr, setTermErr] = useState("")
   const [explorerErr, setExplorerErr] = useState("")
+  // which deployed harness the terminal "Launch" button starts (multi-harness)
+  const [launchHarness, setLaunchHarness] = useState("")
   const openTerm = (command) => {
     setTermErr("")
     openTerminal(proj.id, command).catch((e) =>
@@ -1110,6 +1232,16 @@ function WorkingView({
       setExplorerErr("explorer: " + (e && e.message ? e.message : String(e)))
     )
   }
+
+  // multi-harness terminal launch: the deployed harnesses that have a CLI command
+  // (IDE-based harnesses like cursor/copilot have no terminal command). The
+  // picker lets you pick which one "Launch" starts in a native terminal.
+  const launchable = ((pstate && pstate.harnesses && pstate.harnesses.deployed) || []).filter(
+    (hh) => (pstate.harnesses.launch[hh] || {}).cmd
+  )
+  const selHarness =
+    launchHarness && launchable.includes(launchHarness) ? launchHarness : launchable[0]
+  const selCmd = selHarness ? (pstate.harnesses.launch[selHarness] || {}).cmd : null
   return h(
     "div",
     { style: { display: "flex", gap: 12, alignItems: "stretch" } },
@@ -1175,20 +1307,40 @@ function WorkingView({
               "Terminal"
             ),
             pstate &&
-              pstate.launch_cmd &&
+              launchable.length > 0 &&
               h(
-                Button,
-                {
-                  small: true,
-                  kind: "ghost",
-                  title:
-                    (pstate.launch_hint || "Launch the harness in a native terminal") +
-                    "\n" +
-                    pstate.launch_cmd,
-                  onClick: () => openTerm(pstate.launch_cmd),
-                },
-                h(Rocket, { size: 13 }),
-                "Launch harness"
+                "div",
+                { style: { display: "flex", alignItems: "center", gap: 4 } },
+                h(
+                  "select",
+                  {
+                    value: selHarness,
+                    onChange: (e) => setLaunchHarness(e.target.value),
+                    title: "Pick which deployed harness to launch in the terminal",
+                    style: {
+                      fontFamily: MONO,
+                      fontSize: 11,
+                      padding: "3px 6px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(148,163,184,.3)",
+                      background: "rgba(15,23,42,.5)",
+                      color: "#e2e8f0",
+                      outline: "none",
+                    },
+                  },
+                  launchable.map((hh) => h("option", { key: hh, value: hh }, hh))
+                ),
+                h(
+                  Button,
+                  {
+                    small: true,
+                    kind: "ghost",
+                    title: "Launch " + selHarness + " in a native terminal\n" + (selCmd || ""),
+                    onClick: () => openTerm(selCmd),
+                  },
+                  h(Rocket, { size: 13 }),
+                  "Launch"
+                )
               ),
             h(
               Button,
@@ -1208,6 +1360,8 @@ function WorkingView({
         )
       ),
       ),
+      // mini status dashboard: GitHub / Issue-Radar / per-harness readiness
+      pstate && h(StatusDashboard, { pstate, proj, onRunSetup, busy }),
       // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
       !proj.setup_done
         ? h(SetupWizard, { proj, state, cliOk, busy, onInstallCli, onRun: (harness, preset, scope) => onRunSetup(harness, preset, scope) })

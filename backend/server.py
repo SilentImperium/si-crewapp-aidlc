@@ -310,6 +310,10 @@ def create_project(d):
             "name": name,
             "path": p,
             "harness": None,
+            # multi-harness: the set of harnesses this project has been
+            # deployed for (`aidlc config --harness <h>`). They coexist on disk,
+            # so a project can be set up for several harnesses at once.
+            "harnesses": [],
             "preset": None,
             "scope": None,
             "setup_done": False,
@@ -451,6 +455,10 @@ def job_setup(job):
         dcode, dout = _run_cmd(["aidlc", "doctor"], p, 300, "doctor")
         with LOCK:
             proj["setup_done"] = True
+            # multi-harness: this project is now set up for `harness` too
+            # (harnesses coexist on disk), so record it in the deployed set.
+            if harness not in proj.get("harnesses", []):
+                proj.setdefault("harnesses", []).append(harness)
             proj["updated_at"] = time.time()
             _save_state()
         summary = "setup complete" + ("" if dcode == 0 else " (doctor exited %d - see log)" % dcode)
@@ -778,9 +786,30 @@ def project_state(pid):
     # back-compat display string (the UI now uses launch_cmd / launch_hint)
     launch = (launch_cmd or "open in your IDE") + (("   (" + launch_hint + ")") if launch_hint else "")
 
+    # mini status-dashboard inputs. The GitHub dot is computed in the UI (it folds
+    # in the host `gh` auth state from /api/gh-status, a network call we keep OUT
+    # of this 4 s poll). Here we only expose the fast, per-project git facts.
+    remote = forge.git_remote(str(p))
+    github = {
+        "is_git": bool(disk_git),
+        "has_origin": bool(remote.get("owner") and remote.get("repo")),
+        "owner": remote.get("owner"),
+        "repo": remote.get("repo"),
+        "url": remote.get("url"),
+    }
+    # multi-harness: which of the known harnesses this project is deployed for,
+    # plus the per-harness launch spec the terminal picker launches from.
+    harnesses = {
+        "all": HARNESSES,
+        "deployed": list(proj.get("harnesses") or []),
+        "launch": {hh: LAUNCH_SPECS.get(hh, {}) for hh in HARNESSES},
+    }
+
     return {
         "project": proj,
         "cli": cli,
+        "github": github,
+        "harnesses": harnesses,
         "stamp": stamp,
         "settings": settings,
         "space": space,

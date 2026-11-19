@@ -86,17 +86,17 @@ const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 // ---------------------------------------------------------------------------
 // shared bits
 
-function Dot({ tone = "#6b7280", pulse = false }) {
+function Dot({ tone = "#6b7280", pulse = false, size = 8 }) {
   return h("span", {
     className: pulse ? "aidlc-dot-pulse" : undefined,
     style: {
-      width: 8,
-      height: 8,
+      width: size,
+      height: size,
       borderRadius: "50%",
       background: tone,
       display: "inline-block",
       flexShrink: 0,
-      boxShadow: `0 0 6px ${tone}cc, 0 0 14px ${tone}55`,
+      boxShadow: `0 0 ${size * 0.8}px ${tone}cc, 0 0 ${size * 1.8}px ${tone}55`,
     },
   })
 }
@@ -172,18 +172,18 @@ function Button({ kind, onClick, disabled, children, title, small }) {
   )
 }
 
-function Card({ title, icon, actions, children, tone }) {
+function Card({ title, icon, actions, children, tone, pulse }) {
   return h(
     "div",
     {
-      className: "aidlc-card aidlc-fade-up",
+      className: "aidlc-card aidlc-fade-up" + (pulse ? " aidlc-heartbeat" : ""),
       style: {
         border: "1px solid rgba(34,211,238,.16)",
         borderRadius: 14,
         background: "rgba(10,14,26,.55)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
-        boxShadow: "0 0 0 1px rgba(34,211,238,.04), 0 10px 34px rgba(2,6,23,.55)",
+        boxShadow: "0 0 0 1px rgba(34,211,238,.04), 0 0 22px rgba(34,211,238,.09), 0 10px 34px rgba(2,6,23,.55)",
         padding: 16,
         display: "flex",
         flexDirection: "column",
@@ -275,13 +275,14 @@ const NEON_CSS = `
 .aidlc-root {
   position: relative;
   min-height: 100vh;
+  overflow: hidden;
   background-color: #05060f;
   background-image:
-    radial-gradient(1200px 620px at 18% -8%, rgba(34,211,238,.13), transparent 62%),
-    radial-gradient(1000px 520px at 92% 2%, rgba(168,85,247,.13), transparent 62%),
-    radial-gradient(900px 460px at 50% 118%, rgba(52,211,153,.09), transparent 60%),
-    linear-gradient(rgba(34,211,238,.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34,211,238,.04) 1px, transparent 1px);
+    radial-gradient(1200px 620px at 18% -8%, rgba(34,211,238,.17), transparent 62%),
+    radial-gradient(1000px 520px at 92% 2%, rgba(168,85,247,.17), transparent 62%),
+    radial-gradient(900px 460px at 50% 118%, rgba(52,211,153,.12), transparent 60%),
+    linear-gradient(rgba(34,211,238,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34,211,238,.05) 1px, transparent 1px);
   background-size: auto, auto, auto, 44px 44px, 44px 44px;
 }
 .aidlc-neon-title { text-shadow: 0 0 10px rgba(34,211,238,.7), 0 0 22px rgba(34,211,238,.35); }
@@ -307,17 +308,52 @@ const NEON_CSS = `
 .aidlc-glow-pulse { animation: aidlc-glow 3.2s ease-in-out infinite; }
 .aidlc-dot-pulse { animation: aidlc-dot-pulse 1.6s ease-in-out infinite; }
 .aidlc-flicker { animation: aidlc-flicker 7s linear infinite; }
-.aidlc-neon-top { position: relative; overflow: hidden; }
+.aidlc-neon-top { position: relative; border-radius: 14px; }
 .aidlc-neon-top::before {
   content: "";
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
+  border-radius: 14px 14px 0 0;
   background: linear-gradient(90deg, transparent, #22d3ee 30%, #a855f7 70%, transparent);
   box-shadow: 0 0 14px rgba(34,211,238,.8);
 }
+@keyframes aidlc-heartbeat {
+  0%        { box-shadow: 0 0 0 0 rgba(52,211,153,.50);  opacity: .9; }
+  14%       { box-shadow: 0 0 26px 4px rgba(52,211,153,.80); opacity: 1; }
+  30%       { box-shadow: 0 0 5px 1px rgba(52,211,153,.25); opacity: .5; }
+  44%       { box-shadow: 0 0 18px 3px rgba(52,211,153,.65); opacity: .95; }
+  75%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0);    opacity: .3; }
+}
+.aidlc-heartbeat { position: relative; }
+.aidlc-heartbeat::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 16px;
+  border: 1px solid rgba(52,211,153,.35);
+  pointer-events: none;
+  animation: aidlc-heartbeat 2.2s ease-in-out infinite;
+}
+@keyframes aidlc-scan {
+  0%   { top: -15%; }
+  100% { top: 115%; }
+}
+.aidlc-scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -15%;
+  height: 140px;
+  background: linear-gradient(180deg, transparent, rgba(34,211,238,.06) 45%, rgba(168,85,247,.05) 55%, transparent);
+  pointer-events: none;
+  z-index: 40;
+  animation: aidlc-scan 10s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .aidlc-fade-up, .aidlc-glow-pulse, .aidlc-dot-pulse, .aidlc-flicker { animation: none !important; }
+  .aidlc-heartbeat::after, .aidlc-scanline { animation: none !important; }
+  .aidlc-scanline { display: none; }
   .aidlc-card, .aidlc-btn, .aidlc-input { transition: none !important; }
 }
 `
@@ -818,7 +854,7 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
           { className: "aidlc-neon-top", style: { width: 560, maxWidth: "100%" } },
         h(
           Card,
-            { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#4ade80" } }) },
+            { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#4ade80" } }), pulse: true },
           h(Field, { label: "Folder path", hint: "a local folder - git is optional, and a later step" },
             h("input", {
               className: "aidlc-input",
@@ -1184,6 +1220,12 @@ function FileTree({ pid, onOpenPath }) {
 // dots show which of the known harnesses are deployed, with a Deploy action for
 // the missing ones.
 const DOT = { green: "#34d399", amber: "#fbbf24", red: "#f87171" }
+// per-tone row tint so each RAG row glows in its own color
+const ROW_TINT = {
+  "#34d399": { bg: "rgba(52,211,153,.09)", glow: "0 0 14px rgba(52,211,153,.14)" },
+  "#fbbf24": { bg: "rgba(251,191,36,.09)", glow: "0 0 14px rgba(251,191,36,.16)" },
+  "#f87171": { bg: "rgba(248,113,113,.10)", glow: "0 0 14px rgba(248,113,113,.18)" },
+}
 
 function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const [ghStatus, setGhStatus] = useState(null)
@@ -1246,8 +1288,9 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const preset = (proj && proj.preset) || "balanced"
   const scope = (proj && proj.scope) || "express"
 
-  const row = (key, dot, label, sub, extra) =>
-    h(
+  const row = (key, dot, label, sub, extra) => {
+    const tint = ROW_TINT[dot] || { bg: "rgba(34,211,238,.05)", glow: "none" }
+    return h(
       "div",
       {
         key,
@@ -1257,13 +1300,15 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
           gap: 3,
           padding: "7px 9px",
           borderRadius: 8,
-          background: "rgba(34,211,238,.05)",
+          background: tint.bg,
+          borderLeft: `2px solid ${dot}`,
+          boxShadow: tint.glow,
         },
       },
       h(
         "div",
         { style: { display: "flex", alignItems: "center", gap: 7 } },
-        h(Dot, { tone: dot }),
+        h(Dot, { tone: dot, pulse: true, size: 10 }),
         h(
           "span",
           { style: { fontWeight: 600, color: "#e2e8f0", fontSize: 12, flex: 1, minWidth: 0 } },
@@ -1289,6 +1334,7 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
           )
         : null
     )
+  }
 
   const children = [
     row("gh", ghDot, "GitHub", ghSub),
@@ -1336,7 +1382,7 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
 
   return h(
     Card,
-    { title: "Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }) },
+    { title: "Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }), pulse: true },
     h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, children)
   )
 }
@@ -2339,6 +2385,7 @@ export default function SiCrewappAidlcApp() {
         style: { width: "100%" },
       },
       h(NeonStyles),
+      h("div", { className: "aidlc-scanline", "aria-hidden": true }),
       // header
       h(
         "div",

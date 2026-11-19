@@ -850,10 +850,17 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
       h("span", { style: { fontSize: 11.5, color: "#64748b" } },
         projects.length ? `${projects.length} tracked in your AI-DLC portfolio` : "your AI-DLC portfolio")
     ),
-    // two-column content: the portfolio (left) + the global settings status (right)
+    // two-column content: the global settings status (left) + the portfolio (right)
     h(
       "div",
       { style: { display: "flex", gap: 16, alignItems: "flex-start" } },
+      // left column: the global settings status dashboard (connectors, not a
+      // per-project git stage)
+      h(
+        "div",
+        { style: { flex: "0 0 240px", width: 240, display: "flex", flexDirection: "column", gap: 12 } },
+        h(SettingsStatusDashboard)
+      ),
       h(
         "div",
         { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
@@ -981,13 +988,6 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
             )
           )
         )
-      ),
-      // right column: the global settings status dashboard (connectors, not a
-      // per-project git stage)
-      h(
-        "div",
-        { style: { flex: "0 0 240px", width: 240, display: "flex", flexDirection: "column", gap: 12 } },
-        h(SettingsStatusDashboard)
       )
     )
   )

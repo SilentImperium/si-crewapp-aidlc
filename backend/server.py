@@ -95,14 +95,17 @@ SCOPES = {
     "enterprise": ("Enterprise", 33, "Regulated / high-assurance work, full traceability"),
 }
 
-LAUNCH_HINTS = {
-    "kiro": "kiro-cli chat",
-    "kiro-v2": "kiro-cli chat   (Kiro CLI on its V2 engine)",
-    "opencode": "opencode",
-    "claude": "claude",
-    "codex": "codex",
-    "cursor": "Open the project in Cursor, then run /aidlc",
-    "copilot": "Open the project in GitHub Copilot Chat, then run /aidlc",
+# Per-harness launch spec. ``cmd`` is the clean, directly-executable command the
+# embedded terminal spawns (None for IDE-based harnesses that have no CLI).
+# ``hint`` is a human-readable tip shown in the UI (never fed to a shell).
+LAUNCH_SPECS = {
+    "kiro": {"cmd": "kiro-cli chat"},
+    "kiro-v2": {"cmd": "kiro-cli chat", "hint": "Kiro CLI on its V2 engine"},
+    "opencode": {"cmd": "opencode"},
+    "claude": {"cmd": "claude"},
+    "codex": {"cmd": "codex"},
+    "cursor": {"cmd": None, "hint": "Open the project in Cursor, then run /aidlc"},
+    "copilot": {"cmd": None, "hint": "Open the project in GitHub Copilot Chat, then run /aidlc"},
 }
 
 INSTALL_CMD = (
@@ -738,9 +741,14 @@ def project_state(pid):
                 if not cell or not cell.get(scope) or cell[scope] == "EXECUTE":
                     effective.append(s)
 
-    launch = LAUNCH_HINTS.get(proj.get("harness") or "kiro", "kiro-cli chat")
-    if scope and scope_info:
-        launch = "%s   (suggest: /aidlc --scope %s)" % (launch, scope)
+    spec = LAUNCH_SPECS.get(proj.get("harness") or "kiro", {"cmd": "kiro-cli chat"})
+    launch_cmd = spec.get("cmd")
+    launch_hint = spec.get("hint")
+    if scope and scope_info and launch_cmd:
+        scope_hint = "suggest: /aidlc --scope %s" % scope
+        launch_hint = scope_hint + ((" · " + launch_hint) if launch_hint else "")
+    # back-compat display string (the UI now uses launch_cmd / launch_hint)
+    launch = (launch_cmd or "open in your IDE") + (("   (" + launch_hint + ")") if launch_hint else "")
 
     return {
         "project": proj,
@@ -765,6 +773,8 @@ def project_state(pid):
         "questions_open": q_open,
         "audit_tail": audit_tail,
         "launch": launch,
+        "launch_cmd": launch_cmd,
+        "launch_hint": launch_hint,
         "at": time.time(),
     }
 

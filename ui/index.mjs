@@ -76,6 +76,7 @@ const {
   Zap,
   Square,
   RefreshCw,
+  Maximize,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -530,7 +531,9 @@ function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh }) {
 
   const copyLaunch = async () => {
     try {
-      await navigator.clipboard.writeText(pstate.launch || "")
+      // copy the clean, runnable command when we have one (IDE harnesses fall
+      // back to the display hint)
+      await navigator.clipboard.writeText(pstate.launch_cmd || pstate.launch || "")
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -854,63 +857,74 @@ function WorkingView({
 }) {
   return h(
     "div",
-    { style: { display: "flex", flexDirection: "column", gap: 12, maxWidth: 880 } },
-    // back + project header
+    { style: { display: "flex", gap: 12, alignItems: "stretch" } },
+    // main content (left column)
     h(
       "div",
-      { style: { display: "flex", alignItems: "center", gap: 10 } },
-      h(Button, { kind: "ghost", onClick: onBack }, h(ArrowLeft, { size: 14 }), "Project Management"),
-      h("div", { style: { flex: 1, minWidth: 0 } },
-        h("div", { style: { fontSize: 18, fontWeight: 700 } }, proj.name),
-        h(
-          "div",
-          {
-            style: {
-              fontSize: 11,
-              fontFamily: MONO,
-              color: "#64748b",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            },
-          },
-          proj.path
-        )
-      ),
-      pstate &&
-        h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
-          pstate.setup_done ? "set up" : "needs setup")
-    ),
-    // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
-    !proj.setup_done
-      ? h(SetupWizard, { proj, state, cliOk, busy, onInstallCli, onRun: (harness, preset, scope) => onRunSetup(harness, preset, scope) })
-      : pstate
-        ? h(ProjectDashboard, { pstate, busy, onDoctor, onGitInit, onRefresh })
-        : h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading project state…"),
-    // the crew cockpit: mode toggle + (crew mode) dashboard/kanban/intake + terminal
-    h(CrewCockpit, { proj, pstate, onSetMode }),
-    // live log (belongs to the working context, not the admin one)
-    h(
-      "div",
-      { style: { marginTop: 4 } },
+      { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 } },
+      // back + project header
       h(
         "div",
-        { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
-        h("span", { style: { fontSize: 12, fontWeight: 600, color: "#94a3b8" } }, "Live log"),
-        h("div", { style: { flex: 1 } }),
-        h(
-          "label",
-            { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b", cursor: "pointer" } },
-          h("input", {
-            type: "checkbox",
-            checked: autoScroll,
-            onChange: (e) => setAutoScroll(e.target.checked),
-            style: { accentColor: "#34d399" },
-          }),
-          "auto-scroll")
+        { style: { display: "flex", alignItems: "center", gap: 10 } },
+        h(Button, { kind: "ghost", onClick: onBack }, h(ArrowLeft, { size: 14 }), "Project Management"),
+        h("div", { style: { flex: 1, minWidth: 0 } },
+          h("div", { style: { fontSize: 18, fontWeight: 700 } }, proj.name),
+          h(
+            "div",
+            {
+              style: {
+                fontSize: 11,
+                fontFamily: MONO,
+                color: "#64748b",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+            },
+            proj.path
+          )
+        ),
+        pstate &&
+          h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
+            pstate.setup_done ? "set up" : "needs setup")
       ),
-      h(LogConsole, { lines, autoScroll })
-    )
+      // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
+      !proj.setup_done
+        ? h(SetupWizard, { proj, state, cliOk, busy, onInstallCli, onRun: (harness, preset, scope) => onRunSetup(harness, preset, scope) })
+        : pstate
+          ? h(ProjectDashboard, { pstate, busy, onDoctor, onGitInit, onRefresh })
+          : h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading project state…"),
+      // the crew cockpit: mode toggle + (crew mode) dashboard/kanban/intake
+      h(CrewCockpit, { proj, onSetMode }),
+      // live log (belongs to the working context, not the admin one)
+      h(
+        "div",
+        { style: { marginTop: 4 } },
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+          h("span", { style: { fontSize: 12, fontWeight: 600, color: "#94a3b8" } }, "Live log"),
+          h("div", { style: { flex: 1 } }),
+          h(
+            "label",
+              { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b", cursor: "pointer" } },
+            h("input", {
+              type: "checkbox",
+              checked: autoScroll,
+              onChange: (e) => setAutoScroll(e.target.checked),
+              style: { accentColor: "#34d399" },
+            }),
+            "auto-scroll")
+          ),
+        h(LogConsole, { lines, autoScroll })
+      )
+    ),
+    // terminal drawer (right column) - pops out, resizable, session persists when collapsed
+    h(TerminalDrawer, {
+      pid: proj.id,
+      launchCmd: pstate && pstate.launch_cmd,
+      launchHint: pstate && pstate.launch_hint,
+    })
   )
 }
 
@@ -1242,7 +1256,11 @@ function IntakeForm({ pid, onCreated }) {
 // Self-contained terminal: streams a local shell's I/O (spawned by the backend
 // PTY bridge) and forwards input. No xterm.js / no build step - ANSI stripped,
 // output in a scroll pane, a command line at the bottom.
-function TerminalWidget({ pid, launchCmd }) {
+// Self-contained terminal: streams a local shell's I/O (spawned by the backend
+// PTY bridge) and forwards input. No xterm.js / no build step - ANSI stripped,
+// output in a scroll pane that fills its parent, a command line at the bottom.
+// Reports liveness via onActiveChange so the enclosing drawer can show a dot.
+function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
   const [tid, setTid] = useState(null)
   const [out, setOut] = useState("")
   const [exited, setExited] = useState(null)
@@ -1306,25 +1324,39 @@ function TerminalWidget({ pid, launchCmd }) {
     []
   )
 
-  const clean = out.replace(/\x1b\[[0-9;?]*[ -~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "")
   const running = tid != null && exited == null
+  useEffect(() => {
+    if (onActiveChange) onActiveChange(running || spawning)
+  }, [running, spawning, onActiveChange])
+
+  const clean = out.replace(/\x1b\[[0-9;?]*[ -~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "")
+  const placeholder = spawning
+    ? "spawning…"
+    : tid
+      ? "running - waiting for the harness to produce output…"
+      : "no terminal yet - start a shell or launch the harness above"
 
   return h(
     "div",
-    { style: { display: "flex", flexDirection: "column", gap: 8 } },
+    { style: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 } },
     h(
       "div",
       { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
       h(Button, { small: true, kind: "ghost", onClick: () => spawn(null), disabled: spawning || running },
         h(Terminal, { size: 12 }),
         "Shell"),
-      launchCmd &&
-        h(
-          Button,
-          { small: true, kind: "ghost", onClick: () => spawn(launchCmd), disabled: spawning || running },
-          h(Rocket, { size: 12 }),
-          "Launch harness"
-        ),
+      launchCmd
+        ? h(
+            Button,
+            { small: true, kind: "ghost", onClick: () => spawn(launchCmd), disabled: spawning || running },
+            h(Rocket, { size: 12 }),
+            "Launch harness"
+          )
+        : h(
+            "span",
+            { style: { fontSize: 11, color: "#64748b" } },
+            "no CLI for this harness"
+          ),
       tid &&
         h(Button, { small: true, kind: "danger", onClick: () => killTerminal(tid).catch(() => {}) },
           h(Square, { size: 12 }),
@@ -1337,12 +1369,20 @@ function TerminalWidget({ pid, launchCmd }) {
           running ? "· running" : "· exited (" + exited + ")"
         )
     ),
+    launchHint &&
+      h(
+        "div",
+        { style: { fontSize: 11, color: "#64748b", fontFamily: MONO } },
+        h("span", { style: { color: "#a78bfa" } }, "tip: "),
+        launchHint
+      ),
     h(
       "div",
       {
         ref: preRef,
         style: {
-          height: 240,
+          flex: 1,
+          minHeight: 120,
           overflow: "auto",
           background: "rgba(2,6,23,.85)",
           border: "1px solid rgba(148,163,184,.25)",
@@ -1356,13 +1396,7 @@ function TerminalWidget({ pid, launchCmd }) {
           wordBreak: "break-word",
         },
       },
-      clean
-        ? clean
-        : h(
-            "span",
-            { style: { color: "#475569" } },
-            spawning ? "spawning…" : "no terminal yet - start a shell or launch the harness above"
-          )
+      clean ? clean : h("span", { style: { color: "#475569" } }, placeholder)
     ),
     h(
       "div",
@@ -1388,10 +1422,148 @@ function TerminalWidget({ pid, launchCmd }) {
   )
 }
 
+// clamp a number into [lo, hi]
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
+
+// Right-hand terminal drawer. Collapses to a slim vertical tab and "pops out"
+// into a resizable panel (drag the left edge, double-click it, or maximize).
+// The TerminalWidget stays mounted while collapsed so a live session keeps
+// streaming - closing the drawer never kills the process.
+function TerminalDrawer({ pid, launchCmd, launchHint }) {
+  const [open, setOpen] = useState(true)
+  const [width, setWidth] = useState(460)
+  const [maximized, setMaximized] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [active, setActive] = useState(false)
+
+  const startDrag = (e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    const onMove = (ev) => setWidth(clamp(startW + (startX - ev.clientX), 300, 880))
+    const onUp = () => {
+      setDragging(false)
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+    setDragging(true)
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }
+
+  const panelW = maximized ? "calc(100% - 4px)" : width + "px"
+
+  return h(
+    "div",
+    {
+      style: {
+        position: "relative",
+        flex: "0 0 auto",
+        width: open ? panelW : 44,
+        maxWidth: "100%",
+        minHeight: 360,
+        border: "1px solid rgba(148,163,184,.25)",
+        borderRadius: 10,
+        background: "rgba(2,6,23,.6)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        cursor: open ? "default" : "pointer",
+        transition: dragging ? "none" : "width .18s ease",
+      },
+      onClick: () => !open && setOpen(true),
+    },
+    // left-edge resize handle (open + not maximized only)
+    open &&
+      !maximized &&
+      h("div", {
+        onMouseDown: startDrag,
+        onDoubleClick: () => setMaximized(true),
+        title: "Drag to resize · double-click to maximize",
+        style: {
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 7,
+          cursor: "col-resize",
+          zIndex: 2,
+          background: dragging ? "rgba(52,211,153,.35)" : "transparent",
+        },
+      }),
+    // header (open only)
+    open &&
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "9px 12px",
+            borderBottom: "1px solid rgba(148,163,184,.18)",
+          },
+        },
+        h(Terminal, { size: 14, style: { color: "#34d399" } }),
+        h("span", { style: { fontSize: 12.5, fontWeight: 600, color: "#e2e8f0", flex: 1 } }, "Terminal"),
+        h(
+          Button,
+          {
+            small: true,
+            kind: "ghost",
+            onClick: () => setMaximized((m) => !m),
+            title: maximized ? "Restore" : "Maximize",
+          },
+          maximized ? h(Square, { size: 12 }) : h(Maximize, { size: 12 })
+        ),
+        h(Button, { small: true, kind: "ghost", onClick: () => setOpen(false), title: "Collapse" }, h(X, { size: 12 }))
+      ),
+    // collapsed vertical tab (icon + label + live dot)
+    !open &&
+      h(
+        "div",
+        {
+          style: {
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+            paddingTop: 14,
+          },
+        },
+        h(Terminal, { size: 16, style: { color: active ? "#34d399" : "#94a3b8" } }),
+        active &&
+          h("span", {
+            style: { width: 7, height: 7, borderRadius: 999, background: "#34d399", boxShadow: "0 0 8px #34d399" },
+          }),
+        h(
+          "span",
+          {
+            style: {
+              writingMode: "vertical-rl",
+              fontSize: 11,
+              fontWeight: 600,
+              color: "#94a3b8",
+              letterSpacing: ".08em",
+            },
+          },
+          "Terminal"
+        )
+      ),
+    // body - always mounted (hidden when collapsed) so a live session persists
+    h(
+      "div",
+      { style: { flex: 1, minHeight: 0, display: open ? "flex" : "none", flexDirection: "column", padding: 10 } },
+      h(TerminalWidget, { pid, launchCmd, launchHint, onActiveChange: setActive })
+    )
+  )
+}
+
 // The crew cockpit: mode toggle + status dashboard + "enable a crew" auto-setup
-// + kanban + AI intake + terminal. The dashboard/kanban/intake show in crew
-// mode; the mode toggle and terminal are always present.
-function CrewCockpit({ proj, pstate, onSetMode }) {
+// + kanban + AI intake. The dashboard/kanban/intake show in crew mode; the mode
+// toggle is always present. The terminal lives in its own right-hand drawer.
+function CrewCockpit({ proj, onSetMode }) {
   const pid = proj.id
   const mode = proj.mode || "solo"
   const [remote, setRemote] = useState(null)
@@ -1583,17 +1755,6 @@ function CrewCockpit({ proj, pstate, onSetMode }) {
         },
         h(IntakeForm, { pid, onCreated: () => load() })
       ),
-    // terminal (both modes)
-    h(
-      Card,
-      { title: "Terminal - work alongside the crew", icon: h(Terminal, { size: 14, style: { color: "#34d399" } }) },
-      h(
-        "div",
-        { style: { fontSize: 11, color: "#64748b", marginBottom: 6 } },
-        "Spawns a local shell in your main checkout (the crew runs in its own worktree). Full-screen TUIs are best in a real terminal; this streams output and drives line-oriented commands."
-      ),
-      h(TerminalWidget, { pid, launchCmd: pstate && pstate.launch })
-    ),
     // error
     radarErr &&
       h(

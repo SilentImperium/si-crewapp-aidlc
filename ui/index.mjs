@@ -87,20 +87,18 @@ const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 // shared bits
 
 function Dot({ tone = "#6b7280", pulse = false }) {
-  return h(
-    "span",
-    {
-      style: {
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: tone,
-        display: "inline-block",
-        flexShrink: 0,
-        boxShadow: pulse ? `0 0 6px ${tone}` : "none",
-      },
-    }
-  )
+  return h("span", {
+    className: pulse ? "aidlc-dot-pulse" : undefined,
+    style: {
+      width: 8,
+      height: 8,
+      borderRadius: "50%",
+      background: tone,
+      display: "inline-block",
+      flexShrink: 0,
+      boxShadow: `0 0 6px ${tone}cc, 0 0 14px ${tone}55`,
+    },
+  })
 }
 
 function Chip({ children, tone = "#94a3b8", bg, title }) {
@@ -120,6 +118,7 @@ function Chip({ children, tone = "#94a3b8", bg, title }) {
         borderRadius: 999,
         padding: "2px 9px",
         whiteSpace: "nowrap",
+        textShadow: `0 0 8px ${tone}66`,
       },
     },
     children
@@ -129,21 +128,23 @@ function Chip({ children, tone = "#94a3b8", bg, title }) {
 function btnStyle(kind = "ok") {
   if (kind === "ghost")
     return {
-      background: "transparent",
-      border: "1px solid rgba(148,163,184,.3)",
-      color: "#cbd5e1",
+      background: "rgba(34,211,238,.04)",
+      border: "1px solid rgba(34,211,238,.35)",
+      color: "#a5f3fc",
     }
   if (kind === "danger")
     return {
       background: "rgba(248,113,113,.1)",
-      border: "1px solid rgba(248,113,113,.4)",
+      border: "1px solid rgba(248,113,113,.45)",
       color: "#fca5a5",
+      boxShadow: "0 0 14px rgba(248,113,113,.18)",
     }
   return {
-    background: "linear-gradient(135deg, #34d399, #22d3ee)",
-    border: "1px solid rgba(52,211,153,.5)",
-    color: "#06201a",
-    fontWeight: 600,
+    background: "linear-gradient(135deg, #4ade80, #22d3ee 70%, #818cf8)",
+    border: "1px solid rgba(34,211,238,.6)",
+    color: "#04120f",
+    fontWeight: 700,
+    boxShadow: "0 0 16px rgba(34,211,238,.35)",
   }
 }
 
@@ -154,6 +155,7 @@ function Button({ kind, onClick, disabled, children, title, small }) {
       onClick,
       disabled,
       title,
+      className: "aidlc-btn",
       style: {
         ...btnStyle(kind),
         padding: small ? "4px 10px" : "7px 14px",
@@ -174,10 +176,14 @@ function Card({ title, icon, actions, children, tone }) {
   return h(
     "div",
     {
+      className: "aidlc-card aidlc-fade-up",
       style: {
-        border: "1px solid rgba(148,163,184,.22)",
-        borderRadius: 12,
-        background: "rgba(15,23,42,.35)",
+        border: "1px solid rgba(34,211,238,.16)",
+        borderRadius: 14,
+        background: "rgba(10,14,26,.55)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        boxShadow: "0 0 0 1px rgba(34,211,238,.04), 0 10px 34px rgba(2,6,23,.55)",
         padding: 16,
         display: "flex",
         flexDirection: "column",
@@ -217,8 +223,8 @@ const inputStyle = {
   fontSize: 13,
   padding: "8px 10px",
   borderRadius: 8,
-  border: "1px solid rgba(148,163,184,.3)",
-  background: "rgba(15,23,42,.5)",
+  border: "1px solid rgba(34,211,238,.28)",
+  background: "rgba(5,7,18,.72)",
   color: "#e2e8f0",
   outline: "none",
   boxSizing: "border-box",
@@ -239,6 +245,88 @@ function Field({ label, children, hint }) {
 }
 
 // ---------------------------------------------------------------------------
+// NEON theme - a <style> block with keyframes + scoped aidlc-* classes that give
+// the app its "futuristic / fluorescent" look: a deep-space grid background,
+// glass panels with neon borders, glow-on-hover, and a few orchestrated motions
+// (fade-up entrance, live-dot glow, title flicker). All motion respects the
+// user's prefers-reduced-motion. Scoped with an `aidlc-` prefix so it never
+// collides with the host's own CSS.
+const NEON_CSS = `
+@keyframes aidlc-spin { to { transform: rotate(360deg); } }
+@keyframes aidlc-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes aidlc-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(34,211,238,.20); }
+  50%      { box-shadow: 0 0 28px rgba(34,211,238,.50); }
+}
+@keyframes aidlc-dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.45); }
+}
+@keyframes aidlc-flicker {
+  0%, 91%, 100% { opacity: 1; }
+  92% { opacity: .55; }
+  93% { opacity: 1; }
+  95% { opacity: .8; }
+  96% { opacity: 1; }
+}
+.aidlc-root {
+  position: relative;
+  min-height: 100vh;
+  background-color: #05060f;
+  background-image:
+    radial-gradient(1200px 620px at 18% -8%, rgba(34,211,238,.13), transparent 62%),
+    radial-gradient(1000px 520px at 92% 2%, rgba(168,85,247,.13), transparent 62%),
+    radial-gradient(900px 460px at 50% 118%, rgba(52,211,153,.09), transparent 60%),
+    linear-gradient(rgba(34,211,238,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34,211,238,.04) 1px, transparent 1px);
+  background-size: auto, auto, auto, 44px 44px, 44px 44px;
+}
+.aidlc-neon-title { text-shadow: 0 0 10px rgba(34,211,238,.7), 0 0 22px rgba(34,211,238,.35); }
+.aidlc-card { transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease; }
+.aidlc-card:hover {
+  border-color: rgba(34,211,238,.55);
+  box-shadow: 0 0 26px rgba(34,211,238,.20), inset 0 0 18px rgba(34,211,238,.06);
+  transform: translateY(-2px);
+}
+.aidlc-btn { transition: box-shadow .2s ease, transform .15s ease, filter .2s ease; }
+.aidlc-btn:hover:not(:disabled) {
+  box-shadow: 0 0 18px rgba(52,211,153,.55);
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+.aidlc-btn:active:not(:disabled) { transform: translateY(0); }
+.aidlc-input { transition: border-color .2s ease, box-shadow .2s ease; }
+.aidlc-input:focus {
+  border-color: rgba(34,211,238,.75);
+  box-shadow: 0 0 0 3px rgba(34,211,238,.16), 0 0 20px rgba(34,211,238,.28);
+}
+.aidlc-fade-up { animation: aidlc-fade-up .55s cubic-bezier(.22,1,.36,1) both; }
+.aidlc-glow-pulse { animation: aidlc-glow 3.2s ease-in-out infinite; }
+.aidlc-dot-pulse { animation: aidlc-dot-pulse 1.6s ease-in-out infinite; }
+.aidlc-flicker { animation: aidlc-flicker 7s linear infinite; }
+.aidlc-neon-top { position: relative; overflow: hidden; }
+.aidlc-neon-top::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #22d3ee 30%, #a855f7 70%, transparent);
+  box-shadow: 0 0 14px rgba(34,211,238,.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .aidlc-fade-up, .aidlc-glow-pulse, .aidlc-dot-pulse, .aidlc-flicker { animation: none !important; }
+  .aidlc-card, .aidlc-btn, .aidlc-input { transition: none !important; }
+}
+`
+
+function NeonStyles() {
+  return h("style", null, NEON_CSS)
+}
+
+// ---------------------------------------------------------------------------
 // log console
 
 function LogConsole({ lines, autoScroll }) {
@@ -254,7 +342,7 @@ function LogConsole({ lines, autoScroll }) {
         height: 220,
         overflowY: "auto",
         background: "rgba(2,6,23,.7)",
-        border: "1px solid rgba(148,163,184,.2)",
+        border: "1px solid rgba(34,211,238,.22)",
         borderRadius: 8,
         padding: "10px 12px",
         fontFamily: MONO,
@@ -502,7 +590,7 @@ function SetupWizard({ proj, state, onRun, busy, onInstallCli, cliOk }) {
               onClick: doPreview,
               disabled: busy || previewing || !cliOk,
             },
-            previewing ? h(LoaderCircle, { size: 14, style: { animation: "spin 1.2s linear infinite" } }) : h(Settings2, { size: 14 }),
+            previewing ? h(LoaderCircle, { size: 14, style: { animation: "aidlc-spin 1.2s linear infinite" } }) : h(Settings2, { size: 14 }),
             previewing ? "Reading CLI plan…" : "Preview what it creates"
           )
         : h(
@@ -714,42 +802,52 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
           alignItems: "baseline",
           gap: 10,
           paddingBottom: 8,
-          borderBottom: "1px solid rgba(148,163,184,.18)",
+          borderBottom: "1px solid rgba(34,211,238,.2)",
         },
       },
-      h("span", { style: { fontSize: 18, fontWeight: 700, color: "#e2e8f0", letterSpacing: ".01em" } }, "Project Management"),
+      h("span", { className: "aidlc-neon-title", style: { fontSize: 18, fontWeight: 700, color: "#e2e8f0", letterSpacing: ".01em" } }, "Project Management"),
       h("span", { style: { fontSize: 11.5, color: "#64748b" } },
         projects.length ? `${projects.length} tracked in your AI-DLC portfolio` : "your AI-DLC portfolio")
     ),
-    // add project
+    // add project - a compact, centered neon panel (not full-width)
     h(
-      Card,
-        { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#34d399" } }) },
-      h(Field, { label: "Folder path", hint: "a local folder - git is optional, and a later step" },
-        h("input", {
-          style: inputStyle,
-          value: np.path,
-          placeholder: "e.g. ~/projects/my-app  (or D:\\projects\\my-app)",
-          onChange: (e) => setNp({ ...np, path: e.target.value }),
-        })),
-      h(Field, { label: "Name (optional)" },
-        h("input", {
-          style: inputStyle,
-          value: np.name,
-          placeholder: "defaults to the folder name",
-          onChange: (e) => setNp({ ...np, name: e.target.value }),
-        })),
+      "div",
+        { style: { display: "flex", justifyContent: "center" } },
       h(
-        "label",
-          { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#94a3b8", cursor: "pointer" } },
-        h("input", {
-          type: "checkbox",
-          checked: np.create,
-          onChange: (e) => setNp({ ...np, create: e.target.checked }),
-          style: { accentColor: "#34d399" },
-        }),
-        "create the folder if it does not exist"),
-      h(Button, { onClick: onAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
+        "div",
+          { className: "aidlc-neon-top", style: { width: 560, maxWidth: "100%" } },
+        h(
+          Card,
+            { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#4ade80" } }) },
+          h(Field, { label: "Folder path", hint: "a local folder - git is optional, and a later step" },
+            h("input", {
+              className: "aidlc-input",
+              style: inputStyle,
+              value: np.path,
+              placeholder: "e.g. ~/projects/my-app  (or D:\\projects\\my-app)",
+              onChange: (e) => setNp({ ...np, path: e.target.value }),
+            })),
+          h(Field, { label: "Name (optional)" },
+            h("input", {
+              className: "aidlc-input",
+              style: inputStyle,
+              value: np.name,
+              placeholder: "defaults to the folder name",
+              onChange: (e) => setNp({ ...np, name: e.target.value }),
+            })),
+          h(
+            "label",
+              { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#94a3b8", cursor: "pointer" } },
+            h("input", {
+              type: "checkbox",
+              checked: np.create,
+              onChange: (e) => setNp({ ...np, create: e.target.checked }),
+              style: { accentColor: "#4ade80", width: 14, height: 14 },
+            }),
+            "create the folder if it does not exist"),
+          h(Button, { onClick: onAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
+        )
+      )
     ),
     // all projects label - just above the list itself
     projects.length > 0 &&
@@ -772,10 +870,11 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
                 {
                   key: p.id,
                   onClick: () => onOpen(p.id),
+                  className: "aidlc-card",
                   style: {
-                    border: "1px solid rgba(148,163,184,.22)",
+                    border: "1px solid rgba(34,211,238,.16)",
                     borderRadius: 12,
-                    background: "rgba(15,23,42,.35)",
+                    background: "rgba(10,14,26,.55)",
                     padding: 14,
                     display: "flex",
                     flexDirection: "column",
@@ -1047,7 +1146,7 @@ function FileTree({ pid, onOpenPath }) {
           Button,
           { kind: "ghost", small: true, title: "Refresh the file tree", onClick: load, disabled: loading },
           loading
-            ? h(LoaderCircle, { size: 12, style: { animation: "spin 1.2s linear infinite" } })
+            ? h(LoaderCircle, { size: 12, style: { animation: "aidlc-spin 1.2s linear infinite" } })
             : h(RefreshCw, { size: 12 })
         )
       ),
@@ -1158,7 +1257,7 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
           gap: 3,
           padding: "7px 9px",
           borderRadius: 8,
-          background: "rgba(148,163,184,.06)",
+          background: "rgba(34,211,238,.05)",
         },
       },
       h(
@@ -1368,8 +1467,8 @@ function WorkingView({
                       fontSize: 11,
                       padding: "3px 6px",
                       borderRadius: 6,
-                      border: "1px solid rgba(148,163,184,.3)",
-                      background: "rgba(15,23,42,.5)",
+                      border: "1px solid rgba(34,211,238,.3)",
+                      background: "rgba(5,7,18,.72)",
                       color: "#e2e8f0",
                       outline: "none",
                     },
@@ -1478,8 +1577,9 @@ function ModeToggle({ mode, onMode }) {
           fontWeight: 600,
           cursor: "pointer",
           border: mode === m ? "1px solid rgba(52,211,153,.6)" : "1px solid rgba(148,163,184,.3)",
-          background: mode === m ? "rgba(52,211,153,.15)" : "transparent",
-          color: mode === m ? "#34d399" : "#94a3b8",
+          background: mode === m ? "rgba(34,211,238,.14)" : "transparent",
+          color: mode === m ? "#67e8f9" : "#94a3b8",
+          textShadow: mode === m ? "0 0 10px rgba(34,211,238,.6)" : "none",
         },
       },
       icon,
@@ -1495,7 +1595,7 @@ function ModeToggle({ mode, onMode }) {
         background: "rgba(2,6,23,.5)",
         padding: 4,
         borderRadius: 999,
-        border: "1px solid rgba(148,163,184,.2)",
+        border: "1px solid rgba(34,211,238,.22)",
       },
     },
     opt("solo", "Solo", h(Users, { size: 12 })),
@@ -1508,10 +1608,11 @@ function StatTile({ icon, label, value, sub, tone = "#e2e8f0" }) {
   return h(
     "div",
     {
+      className: "aidlc-card",
       style: {
-        border: "1px solid rgba(148,163,184,.22)",
+        border: "1px solid rgba(34,211,238,.16)",
         borderRadius: 12,
-        background: "rgba(15,23,42,.35)",
+        background: "rgba(10,14,26,.55)",
         padding: 13,
         display: "flex",
         flexDirection: "column",
@@ -1551,9 +1652,9 @@ function KanbanCard({ item, isPr }) {
     "div",
     {
       style: {
-        border: "1px solid rgba(148,163,184,.2)",
+        border: "1px solid rgba(34,211,238,.18)",
         borderRadius: 8,
-        background: "rgba(15,23,42,.5)",
+        background: "rgba(10,14,26,.5)",
         padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
@@ -1632,7 +1733,7 @@ function KanbanBoard({ issues, pulls }) {
         style: {
           flex: "1 1 0",
           minWidth: 190,
-          border: "1px solid rgba(148,163,184,.18)",
+          border: "1px solid rgba(34,211,238,.18)",
           borderRadius: 10,
           background: "rgba(2,6,23,.4)",
           display: "flex",
@@ -1647,7 +1748,7 @@ function KanbanBoard({ issues, pulls }) {
             alignItems: "center",
             gap: 6,
             padding: "8px 11px",
-            borderBottom: "1px solid rgba(148,163,184,.15)",
+            borderBottom: "1px solid rgba(34,211,238,.18)",
             fontSize: 11,
             fontWeight: 700,
             color: tone,
@@ -1752,6 +1853,7 @@ function IntakeForm({ pid, onCreated }) {
       h(
         "input",
         {
+          className: "aidlc-input",
           style: { ...inputStyle, width: 170, flex: "0 0 auto" },
           value: label,
           placeholder: "label (optional)",
@@ -1761,7 +1863,7 @@ function IntakeForm({ pid, onCreated }) {
       h(
         Button,
         { onClick: submit, disabled: busy || !text.trim() },
-        busy ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } }) : h(MessageSquare, { size: 13 }),
+        busy ? h(LoaderCircle, { size: 13, style: { animation: "aidlc-spin 1.2s linear infinite" } }) : h(MessageSquare, { size: 13 }),
         "Create issue & wake crew"
       ),
       created &&
@@ -1914,10 +2016,11 @@ function CrewCockpit({ proj, onSetMode }) {
           fontSize: 12,
           fontFamily: MONO,
           color: "#94a3b8",
-          background: "rgba(15,23,42,.3)",
-          border: "1px solid rgba(148,163,184,.2)",
+          background: "rgba(5,7,18,.5)",
+          border: "1px solid rgba(34,211,238,.25)",
           borderRadius: 8,
           padding: "8px 12px",
+          boxShadow: "0 0 14px rgba(34,211,238,.12)",
         },
       },
       h(GitBranch, { size: 13, style: { color: "#67e8f9" } }),
@@ -1956,6 +2059,7 @@ function CrewCockpit({ proj, onSetMode }) {
               { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
               h(Field, { label: "Repo (name or owner/name)" },
                 h("input", {
+                  className: "aidlc-input",
                   style: { ...inputStyle, width: 240, flex: "0 0 auto" },
                   value: repoName,
                   onChange: (e) => setRepoName(e.target.value),
@@ -1969,7 +2073,7 @@ function CrewCockpit({ proj, onSetMode }) {
                   title: "Create the GitHub repo (if missing), set it as the git origin, and push",
                 },
                 hosting
-                  ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })
+                  ? h(LoaderCircle, { size: 13, style: { animation: "aidlc-spin 1.2s linear infinite" } })
                   : h(Rocket, { size: 13 }),
                 "Create on GitHub + set origin + push")
             ),
@@ -2029,6 +2133,7 @@ function CrewCockpit({ proj, onSetMode }) {
           { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
           h(Field, { label: "Crew name" },
             h("input", {
+              className: "aidlc-input",
               style: { ...inputStyle, width: 220, flex: "0 0 auto" },
               value: crewName,
               onChange: (e) => setCrewName(e.target.value),
@@ -2044,7 +2149,7 @@ function CrewCockpit({ proj, onSetMode }) {
                   : "greyed out: this folder has no git origin remote - use “Set up a GitHub origin” above to create the repo + set origin, a crew binds to a repo",
             },
             enabling
-              ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })
+              ? h(LoaderCircle, { size: 13, style: { animation: "aidlc-spin 1.2s linear infinite" } })
               : h(Zap, { size: 13 }),
             "Enable crew")
         ),
@@ -2230,9 +2335,10 @@ export default function SiCrewappAidlcApp() {
   return h(
     "div",
       {
-        className: "px-6 pt-4 pb-8",
+        className: "aidlc-root px-6 pt-4 pb-8",
         style: { width: "100%" },
       },
+      h(NeonStyles),
       // header
       h(
         "div",
@@ -2244,12 +2350,13 @@ export default function SiCrewappAidlcApp() {
               gap: 9,
               padding: "8px 14px",
               borderRadius: 10,
-              background: "rgba(52,211,153,.08)",
-              border: "1px solid rgba(52,211,153,.3)",
+              background: "rgba(34,211,238,.07)",
+              border: "1px solid rgba(34,211,238,.35)",
+              boxShadow: "0 0 18px rgba(34,211,238,.15)",
             },
           },
-            h(Workflow, { size: 18, style: { color: "#34d399" } }),
-            h("span", { style: { fontWeight: 700, fontSize: 15, letterSpacing: ".02em" } }, "SI AIDLC"),
+            h(Workflow, { size: 18, style: { color: "#22d3ee" } }),
+            h("span", { className: "aidlc-neon-title aidlc-flicker", style: { fontWeight: 700, fontSize: 15, letterSpacing: ".02em", color: "#e2e8f0" } }, "SI AIDLC"),
             h("span", { style: { fontSize: 11, color: "#64748b" } }, "folder-first AI-DLC studio")),
           h(
             "div",
@@ -2282,7 +2389,7 @@ export default function SiCrewappAidlcApp() {
                 color: "#67e8f9",
               },
             },
-            h(LoaderCircle, { size: 14, style: { animation: "spin 1.2s linear infinite" } }),
+            h(LoaderCircle, { size: 14, style: { animation: "aidlc-spin 1.2s linear infinite" } }),
             `job running: ${job.kind}${job.project_id ? ` (project ${job.project_id})` : ""}`
           ),
       // error

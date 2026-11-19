@@ -850,7 +850,14 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
       h("span", { style: { fontSize: 11.5, color: "#64748b" } },
         projects.length ? `${projects.length} tracked in your AI-DLC portfolio` : "your AI-DLC portfolio")
     ),
-    // add project - a compact, centered neon panel (not full-width)
+    // two-column content: the portfolio (left) + the global settings status (right)
+    h(
+      "div",
+      { style: { display: "flex", gap: 16, alignItems: "flex-start" } },
+      h(
+        "div",
+        { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
+        // add project - a compact, centered neon panel (not full-width)
     h(
       "div",
         { style: { display: "flex", justifyContent: "center" } },
@@ -974,6 +981,15 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
             )
           )
         )
+      ),
+      // right column: the global settings status dashboard (connectors, not a
+      // per-project git stage)
+      h(
+        "div",
+        { style: { flex: "0 0 240px", width: 240, display: "flex", flexDirection: "column", gap: 12 } },
+        h(SettingsStatusDashboard)
+      )
+    )
   )
 }
 
@@ -1400,6 +1416,126 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
     Card,
     { title: "Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }), pulse: true },
     h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, children)
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SETTINGS status dashboard - the GLOBAL connector health, shown on the main
+// (Project Management) page's right-hand column. Unlike the per-project Status
+// dashboard (which reports one folder's git/stage: "not a git repo", "no
+// origin", …), this is host-level: the GitHub connector (the host `gh` auth)
+// and the Issue Radar connector (the issue-radar companion app). It answers
+// "are my services wired up?" - not "is this folder ready?".
+function SettingsStatusDashboard() {
+  const [gh, setGh] = useState(null)
+  const [radar, setRadar] = useState(null)
+  const [radarErr, setRadarErr] = useState("")
+
+  useEffect(() => {
+    let stop = false
+    const tick = () => {
+      getGhStatus().then((r) => !stop && setGh(r)).catch(() => !stop && setGh(null))
+      radarRepos()
+        .then((r) => {
+          if (stop) return
+          setRadar(r.repos || [])
+          setRadarErr("")
+        })
+        .catch((e) => {
+          if (stop) return
+          setRadar(null)
+          setRadarErr(e.message || String(e))
+        })
+    }
+    tick()
+    const t = setInterval(tick, 10000)
+    return () => {
+      stop = true
+      clearInterval(t)
+    }
+  }, [])
+
+  // GitHub connector: the host `gh` auth (KiroCrew GitHub connector / `gh auth login`)
+  let ghDot, ghSub
+  if (!gh) {
+    ghDot = DOT.amber
+    ghSub = "checking…"
+  } else if (!gh.available) {
+    ghDot = DOT.red
+    ghSub = "gh CLI not installed"
+  } else if (!gh.authenticated) {
+    ghDot = DOT.amber
+    ghSub = "gh not authenticated - run `gh auth login`"
+  } else {
+    ghDot = DOT.green
+    ghSub = "connected as @" + (gh.owner || "?")
+  }
+
+  // Issue Radar connector: reachable? how many repos are connected?
+  let irDot, irSub
+  if (radarErr) {
+    irDot = DOT.red
+    irSub = "not reachable"
+  } else if (radar == null) {
+    irDot = DOT.amber
+    irSub = "checking…"
+  } else {
+    irDot = DOT.green
+    irSub = "reachable · " + radar.length + " repo" + (radar.length === 1 ? "" : "s") + " connected"
+  }
+
+  const row = (key, dot, label, sub) => {
+    const tint = ROW_TINT[dot] || { bg: "rgba(34,211,238,.05)", glow: "none" }
+    return h(
+      "div",
+      {
+        key,
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+          padding: "7px 9px",
+          borderRadius: 8,
+          background: tint.bg,
+          borderLeft: "2px solid " + dot,
+          boxShadow: tint.glow,
+        },
+      },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 7 } },
+        h(Dot, { tone: dot, pulse: true, size: 10 }),
+        h("span", { style: { fontWeight: 600, color: "#e2e8f0", fontSize: 12, flex: 1, minWidth: 0 } }, label)
+      ),
+      sub
+        ? h(
+            "div",
+            {
+              style: {
+                fontSize: 10.5,
+                color: "#64748b",
+                fontFamily: MONO,
+                paddingLeft: 15,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+            },
+            sub
+          )
+        : null
+    )
+  }
+
+  return h(
+    Card,
+    { title: "Settings Status", icon: h(Settings2, { size: 14, style: { color: "#67e8f9" } }), pulse: true },
+    h(
+      "div",
+      { style: { display: "flex", flexDirection: "column", gap: 8 } },
+      row("gh", ghDot, "GitHub connector", ghSub),
+      row("ir", irDot, "Issue Radar", irSub)
+    )
   )
 }
 

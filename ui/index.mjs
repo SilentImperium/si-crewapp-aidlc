@@ -859,7 +859,7 @@ function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
       h(
         "div",
         { style: { flex: "0 0 240px", width: 240, display: "flex", flexDirection: "column", gap: 12 } },
-        h(SettingsStatusDashboard)
+        h(DependencyStatusDashboard)
       ),
       // right column: the compact add-project panel, left-aligned so it lines
       // up with the full-width project grid below
@@ -1428,13 +1428,15 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
 }
 
 // ---------------------------------------------------------------------------
-// SETTINGS status dashboard - the GLOBAL connector health, shown on the main
+// DEPENDENCY status dashboard - the GLOBAL connector health, shown on the main
 // (Project Management) page's right-hand column. Unlike the per-project Status
 // dashboard (which reports one folder's git/stage: "not a git repo", "no
-// origin", …), this is host-level: the GitHub connector (the host `gh` auth)
-// and the Issue Radar connector (the issue-radar companion app). It answers
-// "are my services wired up?" - not "is this folder ready?".
-function SettingsStatusDashboard() {
+// origin", …), this is host-level: the GitHub connector (the KiroCrew host
+// connection from Settings → Connections, or the host `gh` auth when no
+// connection is set up) and the Issue Radar connector (the issue-radar
+// companion app). It answers "are my services wired up?" - not "is this
+// folder ready?".
+function DependencyStatusDashboard() {
   const [gh, setGh] = useState(null)
   const [radar, setRadar] = useState(null)
   const [radarErr, setRadarErr] = useState("")
@@ -1547,7 +1549,7 @@ function SettingsStatusDashboard() {
 
   return h(
     Card,
-    { title: "Settings Status", icon: h(Settings2, { size: 14, style: { color: "#67e8f9" } }), pulse: true },
+    { title: "Dependency Status", icon: h(Settings2, { size: 14, style: { color: "#67e8f9" } }), pulse: true },
     h(
       "div",
       { style: { display: "flex", flexDirection: "column", gap: 8 } },

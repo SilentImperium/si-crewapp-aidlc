@@ -35,6 +35,7 @@ import queue
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -71,6 +72,39 @@ def _argv(shell: str, command: str | None, cwd: str) -> list[str]:
     return [shell, "-c", command]
 
 
+def _windows_fresh_path() -> str | None:
+    """The *current* user+system PATH, read fresh from the registry.
+
+    The gateway spawns the backend with a scrubbed/stale environment, so the
+    inherited PATH can miss tools the user installed afterwards (kiro,
+    opencode, ...). The registry is the authoritative source: read the user
+    and system Path values (REG_EXPAND_SZ, so expand ``%VARS%``) and merge
+    them with this process's own directory. Returns None when the registry
+    can't be read (fall back to the inherited PATH).
+    """
+    import winreg
+
+    def _read(root, subkey: str) -> str:
+        try:
+            with winreg.OpenKey(root, subkey) as k:
+                val, _ = winreg.QueryValueEx(k, "Path")
+                return str(val) if val else ""
+        except OSError:
+            return ""
+
+    user = _read(winreg.HKEY_CURRENT_USER, r"Environment")
+    system = _read(
+        winreg.HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+    )
+    parts = [p for p in (system, user) if p]
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    if exe_dir:
+        parts.append(exe_dir)
+    merged = os.pathsep.join(parts)
+    return os.path.expandvars(merged) if merged else None
+
+
 def spawn(
     cwd: str,
     command: str | None = None,
@@ -96,6 +130,13 @@ def spawn(
     env.setdefault("TERM", _TERM)
     if env_extra:
         env.update(env_extra)
+    if IS_WINDOWS:
+        # The inherited PATH is often stale (the host process may have started
+        # before the user installed kiro/opencode). Prefer the fresh registry
+        # value so tools on the user/system PATH are actually found.
+        fresh = _windows_fresh_path()
+        if fresh:
+            env["PATH"] = fresh
 
     tid = uuid.uuid4().hex[:12]
     sess: dict = {

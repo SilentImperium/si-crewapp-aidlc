@@ -1,23 +1,20 @@
 """End-to-end smoke test for the new AIDLC endpoints (git-remote, mode, terminal).
 
 Starts the backend on a private port with a test proxy secret, then drives the
-HMAC-authenticated endpoints with a real HTTP client. Verifies the terminal
-PTY/pipe bridge end-to-end: spawn (interactive shell) -> stream (SSE) -> input
-(echo) -> input (exit) -> exit event -> resize -> kill.
+HMAC-authenticated endpoints with a real HTTP client. Verifies the external
+terminal launcher: open-terminal (plain shell) and open-terminal (with a
+command) - each spawns a native terminal window outside the app.
 
-Run:  python _t_http.py
+Run:  python smoke_test.py
 """
 
-import base64
 import hashlib
 import hmac
-import http.client
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.request
 
@@ -58,11 +55,6 @@ def call(method, path, body=None):
         return r.status, json.loads(r.read().decode())
 
 
-def send_input(tid, text):
-    st, _ = call("POST", "/api/terminals/%s/input" % tid, {"data": base64.b64encode(text.encode()).decode()})
-    assert st == 200, "input status %s" % st
-
-
 def main():
     # wait for health
     for _ in range(50):
@@ -93,73 +85,16 @@ def main():
     assert st == 200 and m2["mode"] == "solo" and m2["crew"] is None, "mode solo: %s" % m2
     print("mode crew->solo: ok")
 
-    # terminal: spawn an interactive shell, stream it in a background thread
-    st, tsess = call("POST", "/api/projects/%s/terminal" % pid, {"command": None})
-    assert st == 201, "terminal spawn status %s" % st
-    tid = tsess["terminal_id"]
-    print("terminal:", tid, "pid", tsess.get("pid"), "shell", tsess.get("shell"))
+    # external terminal: spawn a native terminal window OUTSIDE the app
+    st, ot = call("POST", "/api/projects/%s/open-terminal" % pid, {"command": None})
+    assert st == 200 and ot.get("ok"), "open-terminal status %s: %s" % (st, ot)
+    assert ot.get("launcher"), "no launcher reported: %s" % ot
+    print("open-terminal:", ot["launcher"])
 
-    events = []          # (name, data-dict)
-    stream_done = threading.Event()
-
-    def read_stream():
-        conn = http.client.HTTPConnection(HOST, PORT, timeout=30)
-        path = "/api/terminals/%s/stream" % tid
-        conn.request("GET", path, headers={"X-KiroCrew-Proxy": sign("GET", path, b"")})
-        r = conn.getresponse()
-        buf = b""
-        while True:
-            chunk = r.read(1024)
-            if not chunk:
-                break
-            buf += chunk
-            while b"\n\n" in buf:
-                raw, buf = buf.split(b"\n\n", 1)
-                name, data = "", ""
-                for ln in raw.decode("utf-8", "replace").split("\n"):
-                    if ln.startswith("event: "):
-                        name = ln[7:].strip()
-                    elif ln.startswith("data: "):
-                        data = ln[6:]
-                if name:
-                    events.append((name, json.loads(data) if data else {}))
-        stream_done.set()
-
-    sthread = threading.Thread(target=read_stream, daemon=True)
-    sthread.start()
-
-    # give the shell a moment to print a prompt, then drive it
-    time.sleep(2.0)
-    send_input(tid, "echo aidlc-e2e-ok\r")
-    time.sleep(2.0)
-    send_input(tid, "exit\r")
-
-    # wait for the exit event (up to 20s)
-    deadline = time.time() + 20
-    exit_code = None
-    while time.time() < deadline:
-        for name, d in events:
-            if name == "exit":
-                exit_code = d.get("exit")
-        if exit_code is not None:
-            break
-        time.sleep(0.2)
-    stream_done.wait(timeout=5)
-
-    out_blob = "".join(d.get("data", "") and base64.b64decode(d["data"]).decode("utf-8", "replace") for n, d in events if n == "out")
-    saw_echo = "aidlc-e2e-ok" in out_blob
-    print("stream: events=%d saw_echo=%s exit=%s" % (len(events), saw_echo, exit_code))
-    assert saw_echo, "did not see echoed output in the stream"
-    assert exit_code is not None, "no exit event"
-
-    # resize + kill on a fresh interactive shell
-    st, tsess2 = call("POST", "/api/projects/%s/terminal" % pid, {"command": None})
-    tid2 = tsess2["terminal_id"]
-    st, r = call("POST", "/api/terminals/%s/resize" % tid2, {"cols": 100, "rows": 30})
-    assert st == 200, "resize status %s" % st
-    st, r = call("DELETE", "/api/terminals/%s" % tid2)
-    assert st == 200 and r["ok"], "kill status %s" % r
-    print("resize/kill: ok")
+    # with a command (harness-style launch)
+    st, ot2 = call("POST", "/api/projects/%s/open-terminal" % pid, {"command": "echo aidlc-e2e-ok"})
+    assert st == 200 and ot2.get("ok"), "open-terminal (cmd) status %s: %s" % (st, ot2)
+    print("open-terminal with command: ok")
 
     print("ALL OK")
     proc.terminate()

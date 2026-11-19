@@ -41,7 +41,6 @@ Env set by the gateway at spawn:
   KIROCREW_PROXY_SECRET  shared secret for X-KiroCrew-Proxy verification
 """
 
-import base64
 import hashlib
 import hmac
 import json
@@ -981,7 +980,7 @@ class Handler(BaseHTTPRequestHandler):
                     _save_state()
                 return self._json(200, {"id": proj["id"], "mode": mode, "crew": proj.get("crew")})
 
-            m = re.fullmatch(r"projects/([^/]+)/terminal", api)
+            m = re.fullmatch(r"projects/([^/]+)/open-terminal", api)
             if m and method == "POST":
                 d = _json_body(body)
                 proj = get_project(m.group(1))
@@ -989,37 +988,12 @@ class Handler(BaseHTTPRequestHandler):
                 # leave it None for a plain interactive shell.
                 command = d.get("command")
                 command = str(command) if command is not None else None
-                # seed the pty/pipe at the real size so interactive TUIs (opencode,
-                # kiro, ...) lay out correctly instead of guessing 80x24.
-                cols = int(d.get("cols") or 80)
-                rows = int(d.get("rows") or 24)
-                sess = terminal.spawn(proj["path"], command, cols=cols, rows=rows)
-                _append_line("[si-crewapp-aidlc] terminal %s spawned (%s, %dx%d, cwd %s)" % (sess["id"], command or "shell", cols, rows, proj["path"]))
-                return self._json(201, {"terminal_id": sess["id"], "pid": sess["pid"], "shell": sess["shell"]})
-
-            m = re.fullmatch(r"terminals/([^/]+)/stream", api)
-            if m and method == "GET":
-                return self._terminal_stream(m.group(1))
-            m = re.fullmatch(r"terminals/([^/]+)/input", api)
-            if m and method == "POST":
-                d = _json_body(body)
-                tid = m.group(1)
-                if not terminal.has(tid):
-                    return self._json(404, {"error": "no such terminal: %s" % tid})
-                terminal.send_input(tid, terminal.base64_decode(str(d.get("data") or "")))
-                return self._json(200, {"ok": True})
-            m = re.fullmatch(r"terminals/([^/]+)/resize", api)
-            if m and method == "POST":
-                d = _json_body(body)
-                tid = m.group(1)
-                if not terminal.has(tid):
-                    return self._json(404, {"error": "no such terminal: %s" % tid})
-                terminal.resize(tid, int(d.get("cols") or 80), int(d.get("rows") or 24))
-                return self._json(200, {"ok": True})
-            m = re.fullmatch(r"terminals/([^/]+)", api)
-            if m and method == "DELETE":
-                killed = terminal.kill(m.group(1))
-                return self._json(200 if killed else 404, {"ok": killed})
+                r = terminal.open_external(proj["path"], command)
+                _append_line(
+                    "[si-crewapp-aidlc] external terminal opened (%s, cwd %s, cmd %s)"
+                    % (r["launcher"], proj["path"], command or "shell")
+                )
+                return self._json(200, r)
 
             return self._json(404, {"error": "no such api: %s %s" % (method, api)})
         except ApiError as e:
@@ -1084,106 +1058,6 @@ class Handler(BaseHTTPRequestHandler):
         out += "event: %s\ndata: %s\n\n" % (event, json.dumps(payload))
         self.wfile.write(out.encode("utf-8"))
         self.wfile.flush()
-
-    def _terminal_stream(self, tid):
-        """SSE: stream one terminal session's I/O to xterm.js.
-
-        Emits coalesced ``out`` events (``{"data": <base64>}``): everything the
-        pty produced within a ~50ms window is folded into ONE event, so a
-        full-screen TUI (opencode, kiro) arrives as a handful of big events
-        instead of thousands of tiny ones - that is what made the terminal
-        feel unusably slow.
-
-        On (re)connect (the gateway cuts the proxied SSE every ~30s) a
-        ``resync`` event is emitted first: the backlog is drained and only its
-        last ~32KB is carried, so a fresh connection never replays a stale
-        burst. The client clears its screen and restores the tail; TUIs
-        redraw themselves within a frame.
-
-        A final ``exit`` event (``{"exit": <code>}``) ends the stream. 15s
-        heartbeats keep the gateway's proxy from idling the connection out.
-        """
-        try:
-            sess = terminal.get(tid)
-        except KeyError:
-            return self._json(404, {"error": "no such terminal: %s" % tid})
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Connection", "keep-alive")
-        self.close_connection = True
-        self.end_headers()
-
-        q = sess["out_q"]
-        # (Re)connect: drain the backlog, keep only the tail.
-        tail = bytearray()
-        pending_exit = None
-        while True:
-            try:
-                item = q.get_nowait()
-            except queue.Empty:
-                break
-            if "exit" in item:
-                pending_exit = item["exit"]
-            else:
-                tail += item["data"]
-                if len(tail) > 32768:
-                    tail = tail[-32768:]
-        try:
-            if pending_exit is None:
-                self._sse_event("resync", {"data": base64.b64encode(bytes(tail)).decode("ascii")})
-                self.wfile.flush()
-            else:
-                self._sse_event("exit", {"exit": pending_exit})
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
-        if pending_exit is not None:
-            return
-
-        try:
-            self.wfile.write(b"retry: 500\n\n")
-            self.wfile.flush()
-            last = time.time()
-            while True:
-                try:
-                    item = q.get(timeout=0.05)
-                except queue.Empty:
-                    if time.time() - last >= 15:
-                        self.wfile.write(b": ping\n\n")
-                        self.wfile.flush()
-                    last = time.time()
-                    continue
-                if "exit" in item:
-                    self._sse_event("exit", item)
-                    self.wfile.flush()
-                    break
-                # Coalesce everything else ready right now into one event.
-                parts = [item["data"]]
-                size = len(parts[0])
-                exit_code = None
-                while size < 262144:
-                    try:
-                        nxt = q.get_nowait()
-                    except queue.Empty:
-                        break
-                    if "exit" in nxt:
-                        exit_code = nxt["exit"]
-                        break
-                    parts.append(nxt["data"])
-                    size += len(nxt["data"])
-                self._sse_event("out", {"data": base64.b64encode(b"".join(parts)).decode("ascii")})
-                self.wfile.flush()
-                last = time.time()
-                if exit_code is not None:
-                    self._sse_event("exit", {"exit": exit_code})
-                    self.wfile.flush()
-                    break
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
-        finally:
-            self.close_connection = True
 
 
 def _json_body(body):

@@ -34,28 +34,14 @@ import {
   getGitRemote,
   createIssue,
   setMode,
-  spawnTerminal,
-  terminalInput,
-  terminalResize,
-  killTerminal,
-  subscribeTerminal,
+  openTerminal,
   radarCrews,
   radarCrew,
   radarCreateCrew,
   radarCrewSettings,
   radarIssues,
   radarPulls,
-  b64ToUtf8,
-  utf8ToB64,
 } from "./lib.mjs"
-
-// xterm.js is vendored as dependency-free ESM (no build step, no CDN) so the
-// KiroCrew host can load it. It's a real terminal emulator - handles full-screen
-// TUIs (opencode, kiro), colours, cursor positioning and scrollback. It is
-// loaded with a DYNAMIC import() inside TerminalWidget (not a static import at
-// the top of the module) so that if the vendor files are ever absent from a
-// deployment, only the terminal degrades - the rest of the app still loads.
-// See the TerminalWidget mount effect for the import.
 
 const React = window.__kirocrew_modules.react
 const { useState, useEffect, useRef, useCallback, useMemo } = React
@@ -84,31 +70,9 @@ const {
   ListChecks,
   MessageSquare,
   Zap,
-  Square,
-  RefreshCw,
-  Maximize,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-
-// xterm.css is vendored next to the bundle. Load it once via a same-origin
-// <link> (CSP allows style-src 'self'), resolved relative to THIS module so it
-// works regardless of the document URL. A failed load is non-fatal: the terminal
-// still works, just unstyled.
-let _xtermCss = false
-function ensureXtermCss() {
-  if (_xtermCss) return
-  _xtermCss = true
-  try {
-    const url = new URL("./vendor/xterm.css", import.meta.url).href
-    const link = document.createElement("link")
-    link.rel = "stylesheet"
-    link.href = url
-    document.head.appendChild(link)
-  } catch {
-    /* ignore - terminal renders unstyled */
-  }
-}
 
 // ---------------------------------------------------------------------------
 // shared bits
@@ -959,6 +923,13 @@ function WorkingView({
   autoScroll,
   setAutoScroll,
 }) {
+  const [termErr, setTermErr] = useState("")
+  const openTerm = (command) => {
+    setTermErr("")
+    openTerminal(proj.id, command).catch((e) =>
+      setTermErr("terminal: " + (e && e.message ? e.message : String(e)))
+    )
+  }
   return h(
     "div",
     { style: { display: "flex", gap: 12, alignItems: "stretch" } },
@@ -1007,7 +978,41 @@ function WorkingView({
               h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
                 pstate.setup_done ? "set up" : "needs setup"),
               !pstate.setup_done && h(SetupTip, { items: missingSetup(pstate) })
-            )
+            ),
+          // native terminal, OUTSIDE the app (Windows Terminal / PowerShell)
+          h(
+            "div",
+            { style: { display: "flex", gap: 6 } },
+            h(
+              Button,
+              {
+                small: true,
+                kind: "ghost",
+                title: "Open a native terminal in the project folder (outside the app)",
+                onClick: () => openTerm(null),
+              },
+              h(Terminal, { size: 13 }),
+              "Terminal"
+            ),
+            pstate &&
+              pstate.launch_cmd &&
+              h(
+                Button,
+                {
+                  small: true,
+                  kind: "ghost",
+                  title:
+                    (pstate.launch_hint || "Launch the harness in a native terminal") +
+                    "\n" +
+                    pstate.launch_cmd,
+                  onClick: () => openTerm(pstate.launch_cmd),
+                },
+                h(Rocket, { size: 13 }),
+                "Launch harness"
+              )
+          ),
+          termErr &&
+            h("span", { style: { fontSize: 11, color: "#f87171" } }, termErr)
         )
       ),
       // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
@@ -1040,13 +1045,7 @@ function WorkingView({
           ),
         h(LogConsole, { lines, autoScroll })
       )
-    ),
-    // terminal drawer (right column) - pops out, resizable, session persists when collapsed
-    h(TerminalDrawer, {
-      pid: proj.id,
-      launchCmd: pstate && pstate.launch_cmd,
-      launchHint: pstate && pstate.launch_hint,
-    })
+    )
   )
 }
 
@@ -1372,401 +1371,6 @@ function IntakeForm({ pid, onCreated }) {
         )
     ),
     err && h("div", { style: { fontSize: 11.5, color: "#f87171" } }, err)
-  )
-}
-
-// Real embedded terminal (xterm.js, vendored). Streams a local shell's I/O
-// (spawned by the backend PTY bridge) into a genuine terminal emulator, so
-// full-screen TUIs (opencode, kiro) render properly - colours, cursor
-// positioning and scrollback. Keystrokes are forwarded to the live shell; the
-// session keeps streaming while the enclosing drawer is collapsed. Reports
-// liveness via onActiveChange so the drawer can show a live dot.
-function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
-  const [tid, setTid] = useState(null)
-  const [exited, setExited] = useState(null)
-  const [spawning, setSpawning] = useState(false)
-  const [err, setErr] = useState("")
-  const containerRef = useRef(null)
-  const termRef = useRef(null)
-  const fitRef = useRef(null)
-  const tidRef = useRef(null)
-  const subRef = useRef(null)
-
-  const running = tid != null && exited == null
-
-  // report liveness to the drawer
-  useEffect(() => {
-    if (onActiveChange) onActiveChange(running || spawning)
-  }, [running, spawning, onActiveChange])
-
-  // create the terminal once. xterm.js is dynamic-imported so a missing vendor
-  // file degrades to just the terminal (a clear error), not the whole app.
-  useEffect(() => {
-    let cancelled = false
-    let term = null
-    let fit = null
-    let ro = null
-    ;(async () => {
-      try {
-        const { Terminal: XTerm } = await import("./vendor/xterm.mjs")
-        const { FitAddon } = await import("./vendor/addon-fit.mjs")
-        if (cancelled || !containerRef.current) return
-        ensureXtermCss()
-        term = new XTerm({
-          cursorBlink: true,
-          fontSize: 13,
-          letterSpacing: 0,
-          fontFamily: "'JetBrains Mono', " + MONO,
-          scrollback: 5000,
-          allowProposedApi: true,
-          theme: {
-            background: "#0b0e14",
-            foreground: "#e2e8f0",
-            cursor: "#34d399",
-            cursorAccent: "#0b0e14",
-            selectionBackground: "rgba(52,211,153,.28)",
-            black: "#0b0e14", red: "#f87171", green: "#34d399", yellow: "#fbbf24",
-            blue: "#60a5fa", magenta: "#c084fc", cyan: "#22d3ee", white: "#e2e8f0",
-            brightBlack: "#64748b", brightRed: "#fca5a5", brightGreen: "#6ee7b7",
-            brightYellow: "#fde68a", brightBlue: "#93c5fd", brightMagenta: "#d8b4fe",
-            brightCyan: "#67e8f9", brightWhite: "#f8fafc",
-          },
-        })
-        fit = new FitAddon()
-        term.loadAddon(fit)
-        term.open(containerRef.current)
-        requestAnimationFrame(() => {
-          try {
-            fit.fit()
-          } catch (e) {
-            /* render service not ready yet */
-          }
-        })
-        ro = new ResizeObserver(() => {
-          try {
-            fit.fit()
-            if (tidRef.current) terminalResize(tidRef.current, term.cols, term.rows).catch(() => {})
-          } catch (e) {
-            /* ignore */
-          }
-        })
-        ro.observe(containerRef.current)
-        term.onData((data) => {
-          if (tidRef.current) terminalInput(tidRef.current, utf8ToB64(data)).catch(() => {})
-        })
-        termRef.current = term
-        fitRef.current = fit
-      } catch (e) {
-        if (!cancelled) setErr("terminal library failed to load: " + (e && e.message ? e.message : String(e)))
-      }
-    })()
-    return () => {
-      cancelled = true
-      if (ro) ro.disconnect()
-      try {
-        if (term) term.dispose()
-      } catch (e) {
-        /* ignore */
-      }
-      termRef.current = null
-      fitRef.current = null
-    }
-  }, [])
-
-  const spawn = useCallback(
-    async (command) => {
-      if (subRef.current) {
-        subRef.current.close()
-        subRef.current = null
-      }
-      setSpawning(true)
-      setExited(null)
-      setErr("")
-      try {
-        const term = termRef.current
-        const cols = term ? term.cols : 80
-        const rows = term ? term.rows : 24
-        const r = await spawnTerminal(pid, command, cols, rows)
-        const id = r.terminal_id
-        tidRef.current = id
-        setTid(id)
-        if (term) term.clear()
-        // seed the backend with the real size up front so TUIs lay out right
-        terminalResize(id, cols, rows).catch(() => {})
-        // Batch terminal writes: accumulate decoded text and flush to
-        // xterm at most once per animation frame. The backend already
-        // coalesces output into big events; this keeps xterm's parser at
-        // ~60 calls/sec instead of one per event.
-        let pending = ""
-        let raf = 0
-        const flush = () => {
-          raf = 0
-          if (pending && termRef.current) {
-            termRef.current.write(pending)
-            pending = ""
-          }
-        }
-        subRef.current = subscribeTerminal(id, {
-          onOut: (d) => {
-            if (d && d.data) {
-              pending += b64ToUtf8(d.data)
-              if (!raf) raf = requestAnimationFrame(flush)
-            }
-          },
-          onResync: (d) => {
-            // (Re)connected: backend drained its backlog. Clear and restore
-            // the carried tail - TUIs redraw themselves within a frame.
-            if (raf) {
-              cancelAnimationFrame(raf)
-              raf = 0
-            }
-            pending = ""
-            if (termRef.current) {
-              termRef.current.clear()
-              if (d && d.data) termRef.current.write(b64ToUtf8(d.data))
-            }
-          },
-          onExit: (d) => {
-            const code = d && d.exit != null ? d.exit : -1
-            if (raf) {
-              cancelAnimationFrame(raf)
-              raf = 0
-            }
-            if (termRef.current) {
-              if (pending) termRef.current.write(pending)
-              pending = ""
-              termRef.current.write("\r\n\x1b[90m[process exited with code " + code + "]\x1b[0m\r\n")
-            }
-            setExited(code)
-          },
-        })
-      } catch (e) {
-        setErr("terminal spawn failed: " + (e && e.message ? e.message : String(e)))
-      } finally {
-        setSpawning(false)
-      }
-    },
-    [pid]
-  )
-
-  // close the SSE subscription on unmount
-  useEffect(
-    () => () => {
-      if (subRef.current) subRef.current.close()
-      tidRef.current = null
-    },
-    []
-  )
-
-  return h(
-    "div",
-    { style: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 } },
-    // controls
-    h(
-      "div",
-      { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
-      h(Button, { small: true, kind: "ghost", onClick: () => spawn(null), disabled: spawning || running },
-        h(Terminal, { size: 12 }),
-        "Shell"),
-      launchCmd
-        ? h(
-            Button,
-            { small: true, kind: "ghost", onClick: () => spawn(launchCmd), disabled: spawning || running },
-            h(Rocket, { size: 12 }),
-            "Launch harness"
-          )
-        : h("span", { style: { fontSize: 11, color: "#64748b" } }, "no CLI for this harness"),
-      tid &&
-        h(Button, { small: true, kind: "danger", onClick: () => killTerminal(tid).catch(() => {}) },
-          h(Square, { size: 12 }),
-          "Stop"),
-      h("div", { style: { flex: 1 } }),
-      tid &&
-        h(
-          "span",
-          { style: { fontSize: 11, color: running ? "#34d399" : "#64748b", fontFamily: MONO } },
-          running ? "· running" : "· exited (" + exited + ")"
-        )
-    ),
-    launchHint &&
-      h(
-        "div",
-        { style: { fontSize: 11, color: "#64748b", fontFamily: MONO } },
-        h("span", { style: { color: "#a78bfa" } }, "tip: "),
-        launchHint
-      ),
-    // the xterm pane (fills the remaining height)
-    h(
-      "div",
-      {
-        style: {
-          flex: 1,
-          minHeight: 120,
-          overflow: "hidden",
-          background: "#0b0e14",
-          border: "1px solid rgba(148,163,184,.25)",
-          borderRadius: 8,
-          position: "relative",
-        },
-      },
-      h("div", { ref: containerRef, style: { position: "absolute", inset: 0, padding: 6 } }),
-      err &&
-        h(
-          "div",
-          {
-            style: {
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 12,
-              textAlign: "center",
-              fontSize: 12,
-              color: "#f87171",
-            },
-          },
-          err
-        )
-    )
-  )
-}
-
-// clamp a number into [lo, hi]
-const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
-
-// Right-hand terminal drawer. Collapses to a slim vertical tab and "pops out"
-// into a resizable panel (drag the left edge, double-click it, or maximize).
-// The TerminalWidget stays mounted while collapsed so a live session keeps
-// streaming - closing the drawer never kills the process.
-function TerminalDrawer({ pid, launchCmd, launchHint }) {
-  const [open, setOpen] = useState(true)
-  const [width, setWidth] = useState(460)
-  const [maximized, setMaximized] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  const [active, setActive] = useState(false)
-
-  const startDrag = (e) => {
-    e.preventDefault()
-    const startX = e.clientX
-    const startW = width
-    const onMove = (ev) => setWidth(clamp(startW + (startX - ev.clientX), 300, 880))
-    const onUp = () => {
-      setDragging(false)
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-    }
-    setDragging(true)
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-  }
-
-  const panelW = maximized ? "calc(100% - 4px)" : width + "px"
-
-  return h(
-    "div",
-    {
-      style: {
-        position: "relative",
-        flex: "0 0 auto",
-        width: open ? panelW : 44,
-        maxWidth: "100%",
-        minHeight: 360,
-        border: "1px solid rgba(148,163,184,.25)",
-        borderRadius: 10,
-        background: "rgba(2,6,23,.6)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        cursor: open ? "default" : "pointer",
-        transition: dragging ? "none" : "width .18s ease",
-      },
-      onClick: () => !open && setOpen(true),
-    },
-    // left-edge resize handle (open + not maximized only)
-    open &&
-      !maximized &&
-      h("div", {
-        onMouseDown: startDrag,
-        onDoubleClick: () => setMaximized(true),
-        title: "Drag to resize · double-click to maximize",
-        style: {
-          position: "absolute",
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 7,
-          cursor: "col-resize",
-          zIndex: 2,
-          background: dragging ? "rgba(52,211,153,.35)" : "transparent",
-        },
-      }),
-    // header (open only)
-    open &&
-      h(
-        "div",
-        {
-          style: {
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "9px 12px",
-            borderBottom: "1px solid rgba(148,163,184,.18)",
-          },
-        },
-        h(Terminal, { size: 14, style: { color: "#34d399" } }),
-        h("span", { style: { fontSize: 12.5, fontWeight: 600, color: "#e2e8f0", flex: 1 } }, "Terminal"),
-        h(
-          Button,
-          {
-            small: true,
-            kind: "ghost",
-            onClick: () => setMaximized((m) => !m),
-            title: maximized ? "Restore" : "Maximize",
-          },
-          maximized ? h(Square, { size: 12 }) : h(Maximize, { size: 12 })
-        ),
-        h(Button, { small: true, kind: "ghost", onClick: () => setOpen(false), title: "Collapse" }, h(X, { size: 12 }))
-      ),
-    // collapsed vertical tab (icon + label + live dot)
-    !open &&
-      h(
-        "div",
-        {
-          style: {
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 10,
-            paddingTop: 14,
-          },
-        },
-        h(Terminal, { size: 16, style: { color: active ? "#34d399" : "#94a3b8" } }),
-        active &&
-          h("span", {
-            style: { width: 7, height: 7, borderRadius: 999, background: "#34d399", boxShadow: "0 0 8px #34d399" },
-          }),
-        h(
-          "span",
-          {
-            style: {
-              writingMode: "vertical-rl",
-              fontSize: 11,
-              fontWeight: 600,
-              color: "#94a3b8",
-              letterSpacing: ".08em",
-            },
-          },
-          "Terminal"
-        )
-      ),
-    // body - always mounted (hidden when collapsed) so a live session persists
-    h(
-      "div",
-      { style: { flex: 1, minHeight: 0, display: open ? "flex" : "none", flexDirection: "column", padding: 10 } },
-      h(TerminalWidget, { pid, launchCmd, launchHint, onActiveChange: setActive })
-    )
   )
 }
 

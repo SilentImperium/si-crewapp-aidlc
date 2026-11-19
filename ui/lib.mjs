@@ -54,105 +54,11 @@ export const tailLogs = (after, limit) =>
 export const getGitRemote = (pid) => http("GET", `projects/${pid}/git-remote`)
 export const createIssue = (pid, d) => http("POST", `projects/${pid}/issue`, d)
 export const setMode = (pid, mode, crew) => http("POST", `projects/${pid}/mode`, { mode, crew })
-export const spawnTerminal = (pid, command, cols = 80, rows = 24) =>
-  http("POST", `projects/${pid}/terminal`, { command: command ?? null, cols, rows })
-export const terminalInput = (tid, data) => http("POST", `terminals/${tid}/input`, { data })
-// The terminal stream is raw PTY bytes, base64-encoded. Decode as UTF-8 (not
-// Latin-1) so box-drawing chars, emoji and CJK render correctly.
-export function b64ToUtf8(b64) {
-  if (!b64) return ""
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return new TextDecoder("utf-8").decode(bytes)
-}
-export function utf8ToB64(str) {
-  const bytes = new TextEncoder().encode(str)
-  let bin = ""
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-  return btoa(bin)
-}
-export const terminalResize = (tid, cols, rows) =>
-  http("POST", `terminals/${tid}/resize`, { cols, rows })
-export const killTerminal = (tid) => http("DELETE", `terminals/${tid}`)
-
-// Live terminal I/O stream. Same reconnect pattern as the log stream: the
-// gateway cuts the proxied SSE every ~30s, so EventSource reconnects and the
-// backend keeps the session's queue (the reader thread owns it, not the socket).
-export function subscribeTerminal(tid, { onOut, onExit, onResync } = {}) {
-  let es = null
-  let closed = false
-  let timer = null
-  let failCount = 0
-  let openedAt = 0
-
-  function open() {
-    if (closed) return
-    openedAt = Date.now()
-    try {
-      es = new EventSource(apiPath(`terminals/${tid}/stream`))
-    } catch {
-      timer = setTimeout(open, 1000)
-      return
-    }
-    es.addEventListener("out", (e) => {
-      try {
-        onOut && onOut(JSON.parse(e.data))
-      } catch {
-        /* ignore malformed */
-      }
-    })
-    // (Re)connect: the backend drained its backlog; clear the screen and
-    // restore the carried tail. TUIs redraw themselves within a frame.
-    es.addEventListener("resync", (e) => {
-      try {
-        onResync && onResync(JSON.parse(e.data))
-      } catch {
-        onResync && onResync(null)
-      }
-    })
-    es.addEventListener("exit", (e) => {
-      let d = null
-      try {
-        d = JSON.parse(e.data)
-      } catch {
-        /* ignore */
-      }
-      onExit && onExit(d)
-      try {
-        es.close()
-      } catch {
-        /* already closed */
-      }
-    })
-    es.onerror = () => {
-      try {
-        es.close()
-      } catch {
-        /* already closed */
-      }
-      const instantFail = Date.now() - openedAt < 500
-      if (instantFail) failCount += 1
-      else failCount = 0
-      if (closed) return
-      if (failCount >= 4) return // session likely gone; stop hammering
-      timer = setTimeout(open, 800)
-    }
-  }
-
-  open()
-  return {
-    close() {
-      closed = true
-      if (timer) clearTimeout(timer)
-      try {
-        es && es.close()
-      } catch {
-        /* already closed */
-      }
-    },
-  }
-}
+// Open a native terminal window OUTSIDE the app (Windows Terminal, else a
+// detached PowerShell console) in the project folder, optionally running the
+// harness command. The window is fully detached - it outlives the app.
+export const openTerminal = (pid, command) =>
+  http("POST", `projects/${pid}/open-terminal`, { command: command ?? null })
 
 // -- issue-radar (companion crew service, app-to-app "case a") ------------
 //

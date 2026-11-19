@@ -1,4 +1,4 @@
-// Zens-AIDLC - dashboard page bundle.
+// SI AIDLC - dashboard page bundle.
 //
 // Hand-written ESM (no build step): the Kiro Crew host loads this module and
 // renders the default-exported component. React and lucide-react are injected
@@ -240,7 +240,7 @@ function LogConsole({ lines, autoScroll }) {
               style: {
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
-                color: l.text.startsWith("[zens-aidlc]") ? "#67e8f9" : undefined,
+                color: l.text.startsWith("[si-crewapp-AIDLC]") ? "#67e8f9" : undefined,
               },
             },
             l.text
@@ -666,7 +666,7 @@ function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh, onRunS
 // ---------------------------------------------------------------------------
 // main
 
-export default function ZensAidlcApp() {
+export default function SiCrewappAidlcApp() {
   const [state, setState] = useState(null)
   const [sel, setSel] = useState(null)
   const [pstate, setPstate] = useState(null)
@@ -808,7 +808,7 @@ export default function ZensAidlcApp() {
             },
           },
             h(Workflow, { size: 18, style: { color: "#34d399" } }),
-            h("span", { style: { fontWeight: 700, fontSize: 15, letterSpacing: ".02em" } }, "Zens-AIDLC"),
+            h("span", { style: { fontWeight: 700, fontSize: 15, letterSpacing: ".02em" } }, "SI AIDLC"),
             h("span", { style: { fontSize: 11, color: "#64748b" } }, "folder-first AI-DLC studio")),
           h(
             "div",

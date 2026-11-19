@@ -1,7 +1,7 @@
 {
-  "name": "zens-aidlc",
+  "name": "si-crewapp-AIDLC",
   "version": "0.1.0",
-  "displayName": "Zens-AIDLC",
+  "displayName": "SI AIDLC",
   "description": "Folder-first AI-DLC studio for Windows and Linux: create a local project folder, let the app install and configure the aidlc CLI (harness, effort preset, workflow profile), watch doctor health and the live 5-phase stage map, and hand off to your harness when ready. The repo comes second, not first.",
   "author": "Silent Imperium",
   "iconPath": "assets/icon.png",
@@ -14,8 +14,8 @@
     "entry": "index.mjs",
     "pages": [
       {
-        "route": "/apps/zens-aidlc",
-        "label": "Zens-AIDLC",
+        "route": "/apps/si-crewapp-AIDLC",
+        "label": "SI AIDLC",
         "icon": "Workflow"
       }
     ]
@@ -28,8 +28,8 @@
   },
   "permissions": {
     "api": [
-      "/apps/zens-aidlc/api",
-      "/apps/zens-aidlc/api/*"
+      "/apps/si-crewapp-AIDLC/api",
+      "/apps/si-crewapp-AIDLC/api/*"
     ]
   }
 }

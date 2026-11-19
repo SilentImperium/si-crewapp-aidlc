@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Zens-AIDLC app icon (512x512 PNG) with the Python stdlib only.
+"""Generate the SI AIDLC app icon (512x512 PNG) with the Python stdlib only.
 
 Design: a dark navy field with a 300-degree zen ring (emerald -> cyan gradient
 stroke, node dots at both open ends) and a subtle three-node circuit motif

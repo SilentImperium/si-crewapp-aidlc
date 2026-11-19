@@ -1,11 +1,11 @@
-// Zens-AIDLC - shared UI helpers.
+// SI AIDLC - shared UI helpers.
 //
 // Imported by the UI bundle (index.mjs). All traffic goes to the Kiro Crew
-// gateway at /apps/zens-aidlc/api/* with the dashboard session cookie; the
+// gateway at /apps/si-crewapp-AIDLC/api/* with the dashboard session cookie; the
 // gateway HMAC-signs and proxies to the app backend. Plain fetch - no host
 // SDK needed.
 
-const APP = "zens-aidlc"
+const APP = "si-crewapp-AIDLC"
 
 export const apiPath = (p) => `/apps/${APP}/api/${p}`
 

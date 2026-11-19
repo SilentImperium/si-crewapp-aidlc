@@ -1268,32 +1268,47 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const owner = gh.owner
   const repo = gh.repo
 
-  // GitHub dot: green = git repo + origin + a GitHub connection (the KiroCrew
-  // host connector, or the host `gh` auth when no connector is set up);
-  // amber = git repo missing an origin OR no GitHub connectivity; red = not a
-  // git repo at all.
+  // GitHub DEPENDENCY: the host's GitHub connectivity - the KiroCrew host
+  // connector (Settings → Connections) first, the host `gh` CLI auth as the
+  // fallback. Purely host-level: it says nothing about this folder's git state
+  // (that's the "GitHub remote" row in the Project Setup section below).
   const conn = ghStatus && ghStatus.connector
-  let ghDot, ghSub
-  if (!gh.is_git) {
-    ghDot = DOT.red
-    ghSub = "not a git repo"
-  } else if (!gh.has_origin) {
-    ghDot = DOT.amber
-    ghSub = "git repo, no origin remote"
-  } else if (ghStatus && !ghStatus.authenticated && !(conn && conn.connected)) {
-    ghDot = DOT.amber
-    ghSub = (owner || "?") + "/" + (repo || "?") + " · no GitHub connectivity"
+  let depDot, depSub
+  if (!ghStatus) {
+    depDot = DOT.amber
+    depSub = "checking…"
+  } else if (conn && conn.connected) {
+    depDot = DOT.green
+    depSub =
+      "KiroCrew connection" +
+      (conn.connected_since ? " · since " + new Date(conn.connected_since).toLocaleDateString() : "")
+  } else if (ghStatus.authenticated) {
+    depDot = DOT.green
+    depSub = "gh CLI authed as @" + (ghStatus.owner || "?")
+  } else if (!ghStatus.available) {
+    depDot = DOT.red
+    depSub = "gh CLI not installed"
   } else {
-    ghDot = DOT.green
-    ghSub =
+    depDot = DOT.amber
+    depSub = "not connected - connect GitHub in KiroCrew (Settings → Connections) or run `gh auth login`"
+  }
+
+  // GitHub REMOTE: this folder's own git state (repo + origin), independent of
+  // the host connector.
+  let remDot, remSub
+  if (!gh.is_git) {
+    remDot = DOT.red
+    remSub = "not a git repo"
+  } else if (!gh.has_origin) {
+    remDot = DOT.amber
+    remSub = "git repo, no origin remote"
+  } else {
+    remDot = DOT.green
+    remSub =
       (owner || "?") +
       "/" +
       (repo || "?") +
-      (conn && conn.connected
-        ? " · via KiroCrew connection"
-        : ghStatus && ghStatus.owner
-          ? " · @" + ghStatus.owner
-          : "")
+      (gh.url && /github\.com/.test(gh.url) ? " · github.com" : "")
   }
 
   // Issue-Radar dot: green = repo is in issue-radar's connected list; amber =
@@ -1369,20 +1384,12 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   // dashboard is the single "is this project ready?" surface
   const setupDone = !!(pstate && pstate.project && pstate.project.setup_done)
   const setupGaps = missingSetup(pstate)
-  const children = [
-    row(
-      "setup",
-      setupDone ? DOT.green : DOT.amber,
-      "Setup",
-      setupDone ? "engine on disk · ready" : "needs setup - " + setupGaps.length + " gap(s)",
-      !setupDone && h(SetupTip, { items: setupGaps })
-    ),
-    row("gh", ghDot, "GitHub", ghSub),
-    row("ir", irDot, "Issue Radar", irSub),
+  // section header (same look as the old inline "Harnesses" label)
+  const sectionLabel = (key, text) =>
     h(
       "div",
       {
-        key: "hlabel",
+        key,
         style: {
           fontSize: 10,
           fontWeight: 700,
@@ -1392,8 +1399,23 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
           marginTop: 2,
         },
       },
-      "Harnesses"
+      text
+    )
+
+  const children = [
+    sectionLabel("deplabel", "Dependencies"),
+    row("gh", depDot, "GitHub", depSub),
+    row("ir", irDot, "Issue Radar", irSub),
+    sectionLabel("setuplabel", "Project Setup"),
+    row(
+      "setup",
+      setupDone ? DOT.green : DOT.amber,
+      "Setup",
+      setupDone ? "engine on disk · ready" : "needs setup - " + setupGaps.length + " gap(s)",
+      !setupDone && h(SetupTip, { items: setupGaps })
     ),
+    row("ghremote", remDot, "GitHub remote", remSub),
+    sectionLabel("hlabel", "Harnesses"),
   ]
   ;(H.all || []).forEach((hh) => {
     const isDep = deployed.has(hh)
@@ -1422,20 +1444,20 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
 
   return h(
     Card,
-    { title: "Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }), pulse: true },
+    { title: "Dependency Status", icon: h(Activity, { size: 14, style: { color: "#34d399" } }), pulse: true },
     h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, children)
   )
 }
 
 // ---------------------------------------------------------------------------
 // DEPENDENCY status dashboard - the GLOBAL connector health, shown on the main
-// (Project Management) page's right-hand column. Unlike the per-project Status
-// dashboard (which reports one folder's git/stage: "not a git repo", "no
-// origin", …), this is host-level: the GitHub connector (the KiroCrew host
-// connection from Settings → Connections, or the host `gh` auth when no
-// connection is set up) and the Issue Radar connector (the issue-radar
-// companion app). It answers "are my services wired up?" - not "is this
-// folder ready?".
+// (Project Management) page's right-hand column. Unlike the per-project
+// dashboard (whose "Project Setup" section reports one folder's setup/git
+// state: "not a git repo", "no origin", …), this is host-level: the GitHub
+// connector (the KiroCrew host connection from Settings → Connections, or the
+// host `gh` auth when no connection is set up) and the Issue Radar connector
+// (the issue-radar companion app). It answers "are my services wired up?" -
+// not "is this folder ready?".
 function DependencyStatusDashboard() {
   const [gh, setGh] = useState(null)
   const [radar, setRadar] = useState(null)

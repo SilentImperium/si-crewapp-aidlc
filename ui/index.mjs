@@ -1493,15 +1493,51 @@ function TerminalWidget({ pid, launchCmd, launchHint, onActiveChange }) {
         if (term) term.clear()
         // seed the backend with the real size up front so TUIs lay out right
         terminalResize(id, cols, rows).catch(() => {})
+        // Batch terminal writes: accumulate decoded text and flush to
+        // xterm at most once per animation frame. The backend already
+        // coalesces output into big events; this keeps xterm's parser at
+        // ~60 calls/sec instead of one per event.
+        let pending = ""
+        let raf = 0
+        const flush = () => {
+          raf = 0
+          if (pending && termRef.current) {
+            termRef.current.write(pending)
+            pending = ""
+          }
+        }
         subRef.current = subscribeTerminal(id, {
           onOut: (d) => {
-            if (d && d.data && termRef.current) termRef.current.write(b64ToUtf8(d.data))
+            if (d && d.data) {
+              pending += b64ToUtf8(d.data)
+              if (!raf) raf = requestAnimationFrame(flush)
+            }
+          },
+          onResync: (d) => {
+            // (Re)connected: backend drained its backlog. Clear and restore
+            // the carried tail - TUIs redraw themselves within a frame.
+            if (raf) {
+              cancelAnimationFrame(raf)
+              raf = 0
+            }
+            pending = ""
+            if (termRef.current) {
+              termRef.current.clear()
+              if (d && d.data) termRef.current.write(b64ToUtf8(d.data))
+            }
           },
           onExit: (d) => {
             const code = d && d.exit != null ? d.exit : -1
-            setExited(code)
-            if (termRef.current)
+            if (raf) {
+              cancelAnimationFrame(raf)
+              raf = 0
+            }
+            if (termRef.current) {
+              if (pending) termRef.current.write(pending)
+              pending = ""
               termRef.current.write("\r\n\x1b[90m[process exited with code " + code + "]\x1b[0m\r\n")
+            }
+            setExited(code)
           },
         })
       } catch (e) {

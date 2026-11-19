@@ -79,7 +79,7 @@ export const killTerminal = (tid) => http("DELETE", `terminals/${tid}`)
 // Live terminal I/O stream. Same reconnect pattern as the log stream: the
 // gateway cuts the proxied SSE every ~30s, so EventSource reconnects and the
 // backend keeps the session's queue (the reader thread owns it, not the socket).
-export function subscribeTerminal(tid, { onOut, onExit } = {}) {
+export function subscribeTerminal(tid, { onOut, onExit, onResync } = {}) {
   let es = null
   let closed = false
   let timer = null
@@ -100,6 +100,15 @@ export function subscribeTerminal(tid, { onOut, onExit } = {}) {
         onOut && onOut(JSON.parse(e.data))
       } catch {
         /* ignore malformed */
+      }
+    })
+    // (Re)connect: the backend drained its backlog; clear the screen and
+    // restore the carried tail. TUIs redraw themselves within a frame.
+    es.addEventListener("resync", (e) => {
+      try {
+        onResync && onResync(JSON.parse(e.data))
+      } catch {
+        onResync && onResync(null)
       }
     })
     es.addEventListener("exit", (e) => {

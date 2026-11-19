@@ -82,8 +82,9 @@ def spawn(
 
     *cols*/*rows* seed the initial window size so interactive TUIs (opencode,
     kiro, ...) lay out at the real size instead of a 0x0 / 80x24 guess. The
-    reader thread is started here; it feeds ``out_q`` with base64 output
-    chunks and, at the end, one ``{"exit": code}`` marker.
+    reader thread is started here; it feeds ``out_q`` with raw output chunks
+    (the SSE stream coalesces + base64-encodes them) and, at the end, one
+    ``{"exit": code}`` marker.
     """
     shell = _pick_shell()
     argv = _argv(shell, command, cwd)
@@ -141,10 +142,13 @@ def _spawn_windows(sess: dict, argv: list[str], cwd: str, env: dict) -> None:
         out_q = sess["out_q"]
         try:
             while True:
-                chunk = proc.stdout.read(4096)
+                chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
-                out_q.put({"data": base64.b64encode(chunk).decode("ascii")})
+                # Raw bytes (not base64): the SSE stream coalesces whatever is
+                # ready into one event and encodes it once - far cheaper than
+                # one base64 + one SSE event per 4KB chunk.
+                out_q.put({"data": chunk})
         except Exception:
             pass
         finally:
@@ -188,12 +192,14 @@ def _spawn_posix(sess: dict, argv: list[str], cwd: str, env: dict) -> None:
         try:
             while True:
                 try:
-                    chunk = os.read(fd, 4096)
+                    chunk = os.read(fd, 65536)
                 except OSError:
                     break
                 if not chunk:
                     break
-                out_q.put({"data": base64.b64encode(chunk).decode("ascii")})
+                # Raw bytes (not base64): the SSE stream coalesces whatever is
+                # ready into one event and encodes it once.
+                out_q.put({"data": chunk})
         finally:
             code = -1
             try:

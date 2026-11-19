@@ -41,6 +41,7 @@ Env set by the gateway at spawn:
   KIROCREW_PROXY_SECRET  shared secret for X-KiroCrew-Proxy verification
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -1087,9 +1088,20 @@ class Handler(BaseHTTPRequestHandler):
     def _terminal_stream(self, tid):
         """SSE: stream one terminal session's I/O to xterm.js.
 
-        Emits ``out`` events (``{"data": <base64>}``) as the pty produces output
-        and a final ``exit`` event (``{"exit": <code>}``) when the process ends.
-        15s heartbeats keep the gateway's proxy from idling the connection out.
+        Emits coalesced ``out`` events (``{"data": <base64>}``): everything the
+        pty produced within a ~50ms window is folded into ONE event, so a
+        full-screen TUI (opencode, kiro) arrives as a handful of big events
+        instead of thousands of tiny ones - that is what made the terminal
+        feel unusably slow.
+
+        On (re)connect (the gateway cuts the proxied SSE every ~30s) a
+        ``resync`` event is emitted first: the backlog is drained and only its
+        last ~32KB is carried, so a fresh connection never replays a stale
+        burst. The client clears its screen and restores the tail; TUIs
+        redraw themselves within a frame.
+
+        A final ``exit`` event (``{"exit": <code>}``) ends the stream. 15s
+        heartbeats keep the gateway's proxy from idling the connection out.
         """
         try:
             sess = terminal.get(tid)
@@ -1102,17 +1114,71 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.close_connection = True
         self.end_headers()
+
+        q = sess["out_q"]
+        # (Re)connect: drain the backlog, keep only the tail.
+        tail = bytearray()
+        pending_exit = None
+        while True:
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                break
+            if "exit" in item:
+                pending_exit = item["exit"]
+            else:
+                tail += item["data"]
+                if len(tail) > 32768:
+                    tail = tail[-32768:]
+        try:
+            if pending_exit is None:
+                self._sse_event("resync", {"data": base64.b64encode(bytes(tail)).decode("ascii")})
+                self.wfile.flush()
+            else:
+                self._sse_event("exit", {"exit": pending_exit})
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        if pending_exit is not None:
+            return
+
         try:
             self.wfile.write(b"retry: 500\n\n")
+            self.wfile.flush()
+            last = time.time()
             while True:
                 try:
-                    item = sess["out_q"].get(timeout=15)
+                    item = q.get(timeout=0.05)
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
+                    if time.time() - last >= 15:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                    last = time.time()
                     continue
-                self._sse_event("out" if "data" in item else "exit", item)
                 if "exit" in item:
+                    self._sse_event("exit", item)
+                    self.wfile.flush()
+                    break
+                # Coalesce everything else ready right now into one event.
+                parts = [item["data"]]
+                size = len(parts[0])
+                exit_code = None
+                while size < 262144:
+                    try:
+                        nxt = q.get_nowait()
+                    except queue.Empty:
+                        break
+                    if "exit" in nxt:
+                        exit_code = nxt["exit"]
+                        break
+                    parts.append(nxt["data"])
+                    size += len(nxt["data"])
+                self._sse_event("out", {"data": base64.b64encode(b"".join(parts)).decode("ascii")})
+                self.wfile.flush()
+                last = time.time()
+                if exit_code is not None:
+                    self._sse_event("exit", {"exit": exit_code})
+                    self.wfile.flush()
                     break
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass

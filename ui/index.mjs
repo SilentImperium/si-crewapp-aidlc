@@ -77,7 +77,6 @@ const {
   File,
   FolderOpen,
   RefreshCw,
-  Github,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -1725,7 +1724,7 @@ function CrewCockpit({ proj, onSetMode }) {
         Card,
         {
           title: "Set up a GitHub origin",
-          icon: h(Github, { size: 14, style: { color: "#67e8f9" } }),
+          icon: h(GitBranch, { size: 14, style: { color: "#67e8f9" } }),
           tone: "#67e8f9",
         },
         h(

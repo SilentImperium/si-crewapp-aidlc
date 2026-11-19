@@ -1341,7 +1341,18 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
     )
   }
 
+  // overall project readiness - moved here from the title bar so the far-right
+  // dashboard is the single "is this project ready?" surface
+  const setupDone = !!(pstate && pstate.project && pstate.project.setup_done)
+  const setupGaps = missingSetup(pstate)
   const children = [
+    row(
+      "setup",
+      setupDone ? DOT.green : DOT.amber,
+      "Setup",
+      setupDone ? "engine on disk · ready" : "needs setup - " + setupGaps.length + " gap(s)",
+      !setupDone && h(SetupTip, { items: setupGaps })
+    ),
     row("gh", ghDot, "GitHub", ghSub),
     row("ir", irDot, "Issue Radar", irSub),
     h(
@@ -1479,14 +1490,6 @@ function WorkingView({
               proj.path
             )
           ),
-          pstate &&
-            h(
-              "div",
-              { style: { display: "flex", alignItems: "center", gap: 7 } },
-              h(Chip, { tone: pstate.project.setup_done ? "#34d399" : "#fbbf24" },
-                pstate.project.setup_done ? "set up" : "needs setup"),
-              !pstate.project.setup_done && h(SetupTip, { items: missingSetup(pstate) })
-            ),
           // native terminal, OUTSIDE the app (Windows Terminal / PowerShell)
           h(
             "div",
@@ -1612,12 +1615,17 @@ function WorkingView({
 // radar has no create-issue route), and issue-radar's watcher wakes the crew.
 
 // Solo / Crew-Enabled mode toggle.
-function ModeToggle({ mode, onMode }) {
-  const opt = (m, label, icon) =>
+function ModeToggle({ mode, onMode, crewReady }) {
+  // the "Crew" option is only selectable once a crew is actually enabled for
+  // this project (crewReady). Until then it stays greyed out so the user can't
+  // flip into a crew view that has no crew behind it.
+  const opt = (m, label, icon, disabled) =>
     h(
       "button",
       {
-        onClick: () => onMode(m),
+        onClick: () => !disabled && onMode(m),
+        disabled: disabled || undefined,
+        title: disabled ? "Enable a crew first (see “Enable a crew on this repo” below)" : undefined,
         style: {
           display: "inline-flex",
           alignItems: "center",
@@ -1626,10 +1634,11 @@ function ModeToggle({ mode, onMode }) {
           borderRadius: 999,
           fontSize: 12,
           fontWeight: 600,
-          cursor: "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
           border: mode === m ? "1px solid rgba(52,211,153,.6)" : "1px solid rgba(148,163,184,.3)",
           background: mode === m ? "rgba(34,211,238,.14)" : "transparent",
-          color: mode === m ? "#67e8f9" : "#94a3b8",
+          color: mode === m ? "#67e8f9" : disabled ? "#475569" : "#94a3b8",
+          opacity: disabled ? 0.55 : 1,
           textShadow: mode === m ? "0 0 10px rgba(34,211,238,.6)" : "none",
         },
       },
@@ -1650,7 +1659,7 @@ function ModeToggle({ mode, onMode }) {
       },
     },
     opt("solo", "Solo", h(Users, { size: 12 })),
-    opt("crew", "Crew", h(Bot, { size: 12 }))
+    opt("crew", "Crew", h(Bot, { size: 12 }), !crewReady)
   )
 }
 
@@ -1974,6 +1983,11 @@ function CrewCockpit({ proj, onSetMode }) {
   const owner = remote && remote.owner
   const repo = remote && remote.repo
   const hasCrew = mode === "crew"
+  // a crew binds to a GitHub repo, so the origin must exist AND be on github.com
+  const onGithub = !!(remote && remote.on_github)
+  // show the "Set up a GitHub origin" card while there's no origin, or the
+  // origin points at a non-GitHub host (gitlab, self-hosted, …)
+  const showGithubSetup = !remote || !onGithub
 
   const load = useCallback(async () => {
     if (!owner || !repo) return
@@ -2000,7 +2014,8 @@ function CrewCockpit({ proj, onSetMode }) {
   }, [load, owner, repo])
 
   const enableCrew = async () => {
-    if (!owner || !repo) return
+    // a crew binds to a GitHub repo - the origin must exist and be on github.com
+    if (!owner || !repo || !remote || !remote.on_github) return
     setEnabling(true)
     setRadarErr("")
     try {
@@ -2050,7 +2065,7 @@ function CrewCockpit({ proj, onSetMode }) {
     h(
       "div",
       { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-      h(ModeToggle, { mode, onMode: (m) => onSetMode(m, null) }),
+      h(ModeToggle, { mode, onMode: (m) => onSetMode(m, null), crewReady: hasCrew }),
       h("span", { style: { fontSize: 11, color: "#64748b" } },
         hasCrew
           ? "a named issue-radar crew works this repo in its own worktree; you work in the main checkout"
@@ -2076,12 +2091,22 @@ function CrewCockpit({ proj, onSetMode }) {
       },
       h(GitBranch, { size: 13, style: { color: "#67e8f9" } }),
       owner && repo
-        ? h("span", null, owner + "/" + repo, h("span", { style: { color: "#475569" } }, "  ·  origin"))
+        ? h(
+            "span",
+            null,
+            owner + "/" + repo,
+            h(
+              "span",
+              { style: { color: "#475569" } },
+              "  ·  origin" + (remote && remote.host ? "  ·  " + remote.host : "")
+            ),
+            !onGithub && h("span", { style: { color: "#fbbf24" } }, "  ·  not on github.com")
+          )
         : h("span", { style: { color: "#fbbf24" } }, "no git origin - set one below to bind a crew")
     ),
-    // set up a GitHub origin (shown only while there is no origin remote yet)
-    !owner &&
-      !repo &&
+    // set up a GitHub origin (shown while there's no origin, or the origin
+    // isn't on github.com - a crew can only bind to a GitHub repo)
+    showGithubSetup &&
       h(
         Card,
         {
@@ -2193,11 +2218,13 @@ function CrewCockpit({ proj, onSetMode }) {
             Button,
             {
               onClick: enableCrew,
-              disabled: enabling || !owner || !repo,
+              disabled: enabling || !owner || !repo || !onGithub,
               title:
-                owner && repo
+                owner && repo && onGithub
                   ? "Create a named crew on this repo and arm wake-on-new-work"
-                  : "greyed out: this folder has no git origin remote - use “Set up a GitHub origin” above to create the repo + set origin, a crew binds to a repo",
+                  : !owner || !repo
+                    ? "greyed out: this folder has no git origin remote - use “Set up a GitHub origin” above to create the repo + set origin, a crew binds to a repo"
+                    : "greyed out: the git origin is on " + (remote && remote.host ? remote.host : "a non-GitHub host") + ", not github.com - a crew binds to a GitHub repo. Use “Set up a GitHub origin” above to point the origin at GitHub first",
             },
             enabling
               ? h(LoaderCircle, { size: 13, style: { animation: "aidlc-spin 1.2s linear infinite" } })

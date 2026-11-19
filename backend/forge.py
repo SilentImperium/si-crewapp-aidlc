@@ -83,13 +83,37 @@ def _parse_remote(url: str) -> tuple[str | None, str | None]:
     return (owner or None), (repo or None)
 
 
+def _remote_host(url: str) -> str | None:
+    """Extract the hostname from a git remote URL (``github.com``, ``gitlab.com``, …).
+
+    Handles ``https://host/path``, ``ssh://host/path`` and scp-like
+    ``git@host:path`` forms. Returns ``None`` when no host can be determined.
+    """
+    u = (url or "").strip()
+    if not u:
+        return None
+    m = re.match(r"^[a-z][a-z0-9+.-]*://", u)
+    if m:
+        rest = u[m.end():]
+        if "@" in rest:
+            rest = rest.split("@", 1)[1]
+        host = rest.split("/", 1)[0]
+        return host or None
+    if "@" in u and ":" in u:
+        host = u.split("@", 1)[1].split(":", 1)[0]
+        return host or None
+    return None
+
+
 def git_remote(project_dir: str) -> dict:
     """Parse ``owner``/``repo`` out of the project's ``origin`` remote URL.
 
-    Returns ``{"owner","repo","remote","url"}`` (any field ``None`` when the
-    folder is not a git repo with an origin).
+    Returns ``{"owner","repo","remote","url","host","on_github"}`` (any field
+    ``None``/``False`` when the folder is not a git repo with an origin).
+    ``on_github`` is True only when the origin host is ``github.com`` -- the
+    crew system binds to GitHub repos, so the UI gates "enable a crew" on it.
     """
-    out = {"owner": None, "repo": None, "remote": "origin", "url": None}
+    out = {"owner": None, "repo": None, "remote": "origin", "url": None, "host": None, "on_github": False}
     if not shutil.which("git"):
         return out
     try:
@@ -105,6 +129,9 @@ def git_remote(project_dir: str) -> dict:
     owner, repo = _parse_remote(url)
     out["owner"] = owner
     out["repo"] = repo
+    host = _remote_host(url)
+    out["host"] = host
+    out["on_github"] = (host or "").lower() == "github.com"
     return out
 
 
@@ -177,10 +204,13 @@ def host_on_github(
             raise ForgeError(400, "not a git repo and git init failed: %s" % raw.strip()[-200:])
         inited = True
 
-    # origin already configured? then no remote-repo work is needed
+    # origin already configured? if it's already a GitHub origin, no
+    # remote-repo work is needed (just push). A non-GitHub origin (gitlab,
+    # self-hosted, …) falls through so we (re)create the GitHub origin.
     code, existing = _run(["git", "remote", "get-url", "origin"], project_dir, 15)
-    if code == 0 and existing.strip():
-        url = existing.strip()
+    existing = existing.strip()
+    if code == 0 and existing and (_remote_host(existing) or "").lower() == "github.com":
+        url = existing
         owner, repo = _parse_remote(url)
         if push:
             _ensure_commit(project_dir)

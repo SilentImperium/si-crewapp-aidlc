@@ -1268,8 +1268,11 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const owner = gh.owner
   const repo = gh.repo
 
-  // GitHub dot: green = git repo + origin + gh authed; amber = git repo missing
-  // an origin OR gh not authed; red = not a git repo at all.
+  // GitHub dot: green = git repo + origin + a GitHub connection (the KiroCrew
+  // host connector, or the host `gh` auth when no connector is set up);
+  // amber = git repo missing an origin OR no GitHub connectivity; red = not a
+  // git repo at all.
+  const conn = ghStatus && ghStatus.connector
   let ghDot, ghSub
   if (!gh.is_git) {
     ghDot = DOT.red
@@ -1277,12 +1280,20 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   } else if (!gh.has_origin) {
     ghDot = DOT.amber
     ghSub = "git repo, no origin remote"
-  } else if (ghStatus && !ghStatus.authenticated) {
+  } else if (ghStatus && !ghStatus.authenticated && !(conn && conn.connected)) {
     ghDot = DOT.amber
-    ghSub = (owner || "?") + "/" + (repo || "?") + " · gh not authed"
+    ghSub = (owner || "?") + "/" + (repo || "?") + " · no GitHub connectivity"
   } else {
     ghDot = DOT.green
-    ghSub = (owner || "?") + "/" + (repo || "?") + (ghStatus && ghStatus.owner ? " · @" + ghStatus.owner : "")
+    ghSub =
+      (owner || "?") +
+      "/" +
+      (repo || "?") +
+      (conn && conn.connected
+        ? " · via KiroCrew connection"
+        : ghStatus && ghStatus.owner
+          ? " · @" + ghStatus.owner
+          : "")
   }
 
   // Issue-Radar dot: green = repo is in issue-radar's connected list; amber =
@@ -1452,17 +1463,27 @@ function SettingsStatusDashboard() {
     }
   }, [])
 
-  // GitHub connector: the host `gh` auth (KiroCrew GitHub connector / `gh auth login`)
+  // GitHub connector: the KiroCrew host connection (Settings → Connections →
+  // GitHub) is the primary signal - when the host shows it green, we show
+  // green. The host `gh` CLI auth is the fallback when no host connection is
+  // set up (the two are separate auth systems: the connector's token lives in
+  // the host vault, not in `gh`'s hosts.yml).
+  const conn = gh && gh.connector
   let ghDot, ghSub
   if (!gh) {
     ghDot = DOT.amber
     ghSub = "checking…"
+  } else if (conn && conn.connected) {
+    ghDot = DOT.green
+    ghSub =
+      "KiroCrew connection" +
+      (conn.connected_since ? " · since " + new Date(conn.connected_since).toLocaleDateString() : "")
   } else if (!gh.available) {
     ghDot = DOT.red
     ghSub = "gh CLI not installed"
   } else if (!gh.authenticated) {
     ghDot = DOT.amber
-    ghSub = "gh not authenticated - run `gh auth login`"
+    ghSub = "not connected - connect GitHub in KiroCrew (Settings → Connections) or run `gh auth login`"
   } else {
     ghDot = DOT.green
     ghSub = "connected as @" + (gh.owner || "?")
@@ -2259,7 +2280,9 @@ function CrewCockpit({ proj, onSetMode }) {
               ? h(
                   "div",
                   { style: { fontSize: 12, color: "#fbbf24" } },
-                  "gh is not authenticated - connect GitHub in KiroCrew (Settings → Connections) or run `gh auth login` on this host, then refresh")
+                  (ghStatus.connector && ghStatus.connector.connected
+                    ? "the KiroCrew GitHub connection is active, but the host `gh` CLI is not authenticated (the connection does not cover it) - run `gh auth login` on this host, then refresh"
+                    : "gh is not authenticated - run `gh auth login` on this host, then refresh"))
               : null,
           ghStatus &&
             ghStatus.authenticated &&

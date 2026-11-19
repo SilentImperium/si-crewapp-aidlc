@@ -141,10 +141,13 @@ def main():
         assert e.code == 400, "expected 400 for path escape, got %s" % e.code
     print("open-in-explorer path escape: rejected (400)")
 
-    # gh-status: host gh presence + auth (shape only - may be unauthenticated here)
+    # gh-status: host gh presence + auth + the KiroCrew host connector state
+    # (shape only - may be unauthenticated here; the test home has no
+    # connections/connected-since.json, so the connector reads as not connected)
     st, gs = call("GET", "/api/gh-status")
     assert st == 200 and isinstance(gs.get("available"), bool), "gh-status: %s" % gs
-    print("gh-status: available=%s authenticated=%s owner=%s" % (gs.get("available"), gs.get("authenticated"), gs.get("owner")))
+    assert isinstance(gs.get("connector"), dict) and isinstance(gs["connector"].get("connected"), bool), "gh-status.connector: %s" % gs
+    print("gh-status: available=%s authenticated=%s owner=%s connector=%s" % (gs.get("available"), gs.get("authenticated"), gs.get("owner"), gs.get("connector")))
 
     # host-on-github: with an origin already set (a local bare repo) no gh create
     # is needed, so this path is hermetic (no network / gh auth required).

@@ -16,10 +16,12 @@ Stdlib only.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
 GH_TIMEOUT_S = 60
@@ -153,14 +155,52 @@ def _ensure_commit(project_dir: str) -> None:
     _run(["git", "commit", "-q", "-m", "initial commit (AIDLC project)"], project_dir, 60)
 
 
+def kirocrew_github_connector() -> dict:
+    """The KiroCrew host's GitHub connector state (Settings → Connections).
+
+    The host records an active connection in ``$KIROCREW_HOME/connections/
+    connected-since.json`` (``providers.github.connected_since``) - the same
+    state its Settings UI paints green. The connector's own token lives in the
+    host's encrypted vault, so this is a *status* signal, not a credential the
+    app can use (host actions still go through the host ``gh`` CLI). The app
+    backend runs on the same host with ``KIROCREW_HOME`` set by the gateway, so
+    it reads the file directly: no network, no vault access. A missing file,
+    missing key, or unreadable JSON all degrade to "not connected".
+    """
+    out = {"connected": False, "connected_since": None}
+    home = os.environ.get("KIROCREW_HOME") or str(Path.home() / ".kiro" / "crew")
+    f = Path(home) / "connections" / "connected-since.json"
+    try:
+        raw = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    gh = ((raw or {}).get("providers") or {}).get("github") or {}
+    since = gh.get("connected_since")
+    if since:
+        out["connected"] = True
+        out["connected_since"] = since
+    return out
+
+
 def gh_auth_status() -> dict:
     """Whether the host ``gh`` CLI is present and authenticated, and its login.
 
     ``gh`` reads its token from the host config (``~/.config/gh/hosts.yml``),
     which the KiroCrew GitHub connector / ``gh auth login`` populates - so this
     works even in the app backend's scrubbed env (no ``GITHUB_TOKEN`` passthrough).
+
+    The ``connector`` field reports the KiroCrew host's GitHub connection state
+    (Settings → Connections → GitHub) independently of the ``gh`` CLI: the two
+    are separate auth systems (the connector's token lives in the host vault),
+    so a host connection can be green while the ``gh`` CLI is not authed, or
+    vice versa.
     """
-    out = {"available": False, "authenticated": False, "owner": None}
+    out = {
+        "available": False,
+        "authenticated": False,
+        "owner": None,
+        "connector": kirocrew_github_connector(),
+    }
     if not gh_available():
         return out
     out["available"] = True

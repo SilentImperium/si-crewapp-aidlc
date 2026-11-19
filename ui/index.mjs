@@ -1245,6 +1245,17 @@ const ROW_TINT = {
   "#f87171": { bg: "rgba(248,113,113,.10)", glow: "0 0 14px rgba(248,113,113,.18)" },
 }
 
+// Turn a git origin URL into a browsable one, or "" when it isn't web-shaped:
+// https://github.com/o/r(.git) → as-is (minus .git); git@github.com:o/r.git →
+// https://github.com/o/r. Local paths and other schemes stay unlinked.
+function originWebUrl(url) {
+  if (!url) return ""
+  if (/^https?:\/\//.test(url)) return url.replace(/\.git$/i, "")
+  const m = url.match(/^git@([^:]+):(.+)$/)
+  if (m) return "https://" + m[1] + "/" + m[2].replace(/\.git$/i, "")
+  return ""
+}
+
 function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const [ghStatus, setGhStatus] = useState(null)
   const [repos, setRepos] = useState(null)
@@ -1294,7 +1305,9 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   }
 
   // GitHub REMOTE: this folder's own git state (repo + origin), independent of
-  // the host connector.
+  // the host connector. When the origin is a web URL, the repo name is a link
+  // that opens the remote in the browser.
+  const remoteWeb = originWebUrl(gh.url)
   let remDot, remSub
   if (!gh.is_git) {
     remDot = DOT.red
@@ -1304,11 +1317,33 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
     remSub = "git repo, no origin remote"
   } else {
     remDot = DOT.green
-    remSub =
-      (owner || "?") +
-      "/" +
-      (repo || "?") +
-      (gh.url && /github\.com/.test(gh.url) ? " · github.com" : "")
+    const name = (owner || "?") + "/" + (repo || "?")
+    remSub = remoteWeb
+      ? h(
+          "span",
+          null,
+          h(
+            "a",
+            {
+              href: remoteWeb,
+              target: "_blank",
+              rel: "noreferrer",
+              title: "Open " + remoteWeb,
+              style: {
+                color: "#67e8f9",
+                textDecoration: "none",
+                borderBottom: "1px solid rgba(103,232,249,.4)",
+                cursor: "pointer",
+              },
+            },
+            name
+          ),
+          " · " +
+            (remoteWeb.includes("github.com")
+              ? "github.com"
+              : (remoteWeb.match(/^https?:\/\/([^/]+)/) || [])[1] || "remote")
+        )
+      : name
   }
 
   // Issue-Radar dot: green = repo is in issue-radar's connected list; amber =

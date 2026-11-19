@@ -4,6 +4,12 @@
 // renders the default-exported component. React and lucide-react are injected
 // by the host on window.__kirocrew_modules before the import.
 //
+// Two distinct contexts, kept separate (never blended on one screen):
+//   - "All projects" (admin): manage your AI-DLC portfolio - add/remove local
+//     folders, check global CLI health. A clean portfolio surface.
+//   - "Working in {project}" (focused): one project at a time - its setup
+//     wizard or live dashboard, doctor, git-init, harness handoff, live log.
+//
 // Flow (deliberately folder-first, not repo-first):
 //   1. add a local project folder (git is optional and comes later)
 //   2. the app checks (and can install) the native `aidlc` CLI for your OS
@@ -47,6 +53,8 @@ const {
   Stethoscope,
   Copy,
   X,
+  ArrowLeft,
+  ChevronRight,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -490,7 +498,7 @@ function SetupWizard({ proj, state, onRun, busy, onInstallCli, cliOk }) {
 // ---------------------------------------------------------------------------
 // project dashboard (post-setup)
 
-function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh, onRunSetup }) {
+function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh }) {
   const [doctor, setDoctor] = useState(null)
   const [copied, setCopied] = useState(false)
   const proj = pstate.project
@@ -664,6 +672,209 @@ function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh, onRunS
 }
 
 // ---------------------------------------------------------------------------
+// ADMIN view - "all projects" (portfolio management). No project focus.
+
+function ProjectsView({ state, np, setNp, busy, onOpen, onAdd, onRemove }) {
+  const projects = (state && state.projects) || []
+  return h(
+    "div",
+    { style: { display: "flex", flexDirection: "column", gap: 16 } },
+    // section label
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "baseline", gap: 10 } },
+      h("span", { style: { fontSize: 14, fontWeight: 700, color: "#e2e8f0" } }, "All projects"),
+      h("span", { style: { fontSize: 11.5, color: "#64748b" } },
+        projects.length ? `${projects.length} tracked · your AI-DLC portfolio` : "your AI-DLC portfolio")
+    ),
+    // add project
+    h(
+      Card,
+        { title: "Add a project", icon: h(FolderPlus, { size: 14, style: { color: "#34d399" } }) },
+      h(Field, { label: "Folder path", hint: "a local folder - git is optional, and a later step" },
+        h("input", {
+          style: inputStyle,
+          value: np.path,
+          placeholder: "e.g. ~/projects/my-app  (or D:\\projects\\my-app)",
+          onChange: (e) => setNp({ ...np, path: e.target.value }),
+        })),
+      h(Field, { label: "Name (optional)" },
+        h("input", {
+          style: inputStyle,
+          value: np.name,
+          placeholder: "defaults to the folder name",
+          onChange: (e) => setNp({ ...np, name: e.target.value }),
+        })),
+      h(
+        "label",
+          { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#94a3b8", cursor: "pointer" } },
+        h("input", {
+          type: "checkbox",
+          checked: np.create,
+          onChange: (e) => setNp({ ...np, create: e.target.checked }),
+          style: { accentColor: "#34d399" },
+        }),
+        "create the folder if it does not exist"),
+      h(Button, { onClick: onAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
+    ),
+    // project cards
+    projects.length === 0
+      ? h("div", { style: { fontSize: 12.5, color: "#64748b", padding: "4px 2px" } },
+          "No projects yet. Add a local folder above to get started.")
+      : h(
+          "div",
+            { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 } },
+          projects.map((p) =>
+            h(
+              "div",
+                {
+                  key: p.id,
+                  onClick: () => onOpen(p.id),
+                  style: {
+                    border: "1px solid rgba(148,163,184,.22)",
+                    borderRadius: 12,
+                    background: "rgba(15,23,42,.35)",
+                    padding: 14,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    cursor: "pointer",
+                  },
+                },
+              h(
+                "div",
+                { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
+                h(Dot, { tone: p.setup_done ? "#34d399" : "#fbbf24" }),
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { fontSize: 14, fontWeight: 600, color: "#e2e8f0" } }, p.name),
+                  h(
+                    "div",
+                    {
+                      style: {
+                        fontSize: 10.5,
+                        fontFamily: MONO,
+                        color: "#64748b",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      },
+                    },
+                    p.path
+                  )
+                ),
+                h(
+                  "button",
+                    {
+                      style: { ...btnStyle("ghost"), padding: "3px 7px", borderRadius: 6, cursor: "pointer" },
+                      title: "Remove from registry (folder untouched)",
+                      onClick: (e) => {
+                        e.stopPropagation()
+                        onRemove(p)
+                      },
+                    },
+                    h(Trash2, { size: 12, style: { color: "#64748b" } })
+                  )
+              ),
+              h(
+                "div",
+                { style: { display: "flex", gap: 5, flexWrap: "wrap" } },
+                p.harness && h(Chip, null, p.harness),
+                p.scope && h(Chip, null, p.scope),
+                p.setup_done && h(Chip, { tone: "#34d399" }, "set up"),
+                p.git && h(Chip, { tone: "#67e8f9" }, h(GitBranch, { size: 10 }), "git")
+              ),
+              h(
+                "div",
+                { style: { display: "flex", justifyContent: "flex-end" } },
+                h(Button, { kind: "ghost", small: true, onClick: (e) => { e.stopPropagation(); onOpen(p.id) } },
+                  "Open", h(ChevronRight, { size: 12 }))
+              )
+            )
+          )
+        )
+  )
+}
+
+// ---------------------------------------------------------------------------
+// WORKING view - "the current project" (focused, one at a time)
+
+function WorkingView({
+  proj,
+  pstate,
+  busy,
+  state,
+  cliOk,
+  onBack,
+  onDoctor,
+  onGitInit,
+  onRefresh,
+  onInstallCli,
+  onRunSetup,
+  lines,
+  autoScroll,
+  setAutoScroll,
+}) {
+  return h(
+    "div",
+    { style: { display: "flex", flexDirection: "column", gap: 12, maxWidth: 880 } },
+    // back + project header
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 10 } },
+      h(Button, { kind: "ghost", small: true, onClick: onBack }, h(ArrowLeft, { size: 13 }), "All projects"),
+      h("div", { style: { flex: 1, minWidth: 0 } },
+        h("div", { style: { fontSize: 18, fontWeight: 700 } }, proj.name),
+        h(
+          "div",
+          {
+            style: {
+              fontSize: 11,
+              fontFamily: MONO,
+              color: "#64748b",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
+          },
+          proj.path
+        )
+      ),
+      pstate &&
+        h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
+          pstate.setup_done ? "set up" : "needs setup")
+    ),
+    // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
+    !proj.setup_done
+      ? h(SetupWizard, { proj, state, cliOk, busy, onInstallCli, onRun: (harness, preset, scope) => onRunSetup(harness, preset, scope) })
+      : pstate
+        ? h(ProjectDashboard, { pstate, busy, onDoctor, onGitInit, onRefresh })
+        : h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading project state…"),
+    // live log (belongs to the working context, not the admin one)
+    h(
+      "div",
+      { style: { marginTop: 4 } },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+        h("span", { style: { fontSize: 12, fontWeight: 600, color: "#94a3b8" } }, "Live log"),
+        h("div", { style: { flex: 1 } }),
+        h(
+          "label",
+            { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b", cursor: "pointer" } },
+          h("input", {
+            type: "checkbox",
+            checked: autoScroll,
+            onChange: (e) => setAutoScroll(e.target.checked),
+            style: { accentColor: "#34d399" },
+          }),
+          "auto-scroll")
+      ),
+      h(LogConsole, { lines, autoScroll })
+    )
+  )
+}
+
+// ---------------------------------------------------------------------------
 // main
 
 export default function SiCrewappAidlcApp() {
@@ -676,7 +887,6 @@ export default function SiCrewappAidlcApp() {
   const [autoScroll, setAutoScroll] = useState(true)
   const [np, setNp] = useState({ name: "", path: "", create: true })
 
-  const logRef = useRef(null)
   const lastSeq = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -757,6 +967,7 @@ export default function SiCrewappAidlcApp() {
         path: np.path.trim(),
         create: np.create,
       })
+      // jump straight into the working context for the new project
       setSel(p.id)
       setNp({ name: "", path: "", create: true })
     })
@@ -784,6 +995,16 @@ export default function SiCrewappAidlcApp() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const doRunSetup = (harness, preset, scope) => {
+    if (!proj) return
+    if (
+      window.confirm(
+        `Run "aidlc config --harness ${harness}" in ${proj.path}?\n\nThis creates the AI-DLC engine, ${harness} glue and your workspace (about 420 files), then records your preset (${preset}) and runs doctor.`
+      )
+    )
+      act(() => startSetup(proj.id, harness, preset, scope))
   }
 
   return h(
@@ -842,7 +1063,7 @@ export default function SiCrewappAidlcApp() {
               },
             },
             h(LoaderCircle, { size: 14, style: { animation: "spin 1.2s linear infinite" } }),
-            `job running: ${job.kind}${job.project_id ? ` (project ${job.project_id})` : ""} - watch the log below`
+            `job running: ${job.kind}${job.project_id ? ` (project ${job.project_id})` : ""}`
           ),
       // error
       error &&
@@ -862,200 +1083,32 @@ export default function SiCrewappAidlcApp() {
             },
             error
           ),
-      // main grid
-      h(
-        "div",
-          { style: { display: "grid", gridTemplateColumns: "340px 1fr", gap: 16, alignItems: "start" } },
-        // left: projects
-        h(
-          "div",
-            { key: "left", style: { display: "flex", flexDirection: "column", gap: 12 } },
-          h(
-            Card,
-              {
-                title: "New project",
-                icon: h(FolderPlus, { size: 14, style: { color: "#34d399" } }),
-              },
-            h(Field, { label: "Folder path", hint: "a local folder - git is optional, and a later step" },
-              h("input", {
-                style: inputStyle,
-                value: np.path,
-                placeholder: "e.g. ~/projects/my-app  (or D:\\projects\\my-app)",
-                onChange: (e) => setNp({ ...np, path: e.target.value }),
-              })),
-            h(Field, { label: "Name (optional)" },
-              h("input", {
-                style: inputStyle,
-                value: np.name,
-                placeholder: "defaults to the folder name",
-                onChange: (e) => setNp({ ...np, name: e.target.value }),
-              })),
-            h(
-              "label",
-                { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#94a3b8", cursor: "pointer" } },
-              h("input", {
-                type: "checkbox",
-                checked: np.create,
-                onChange: (e) => setNp({ ...np, create: e.target.checked }),
-                style: { accentColor: "#34d399" },
-              }),
-              "create the folder if it does not exist"),
-            h(Button, { onClick: doAdd, disabled: busy }, h(FolderPlus, { size: 13 }), "Add project")
-          ),
-          h(
-            Card,
-              {
-                title: `Projects (${(state && state.projects.length) || 0})`,
-                icon: h(Folder, { size: 14, style: { color: "#22d3ee" } }),
-              },
-            (state && state.projects.length === 0) &&
-              h("div", { style: { fontSize: 12, color: "#64748b" } }, "No projects yet. Add a local folder to get started."),
-            (state && state.projects || []).map((p) => {
-              const active = p.id === sel
-              return h(
-                "div",
-                  {
-                    key: p.id,
-                    onClick: () => setSel(p.id),
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "9px 10px",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      background: active ? "rgba(34,211,238,.08)" : "transparent",
-                      border: `1px solid ${active ? "rgba(34,211,238,.4)" : "rgba(148,163,184,.18)"}`,
-                    },
-                  },
-                h(Dot, { tone: p.setup_done ? "#34d399" : "#fbbf24" }),
-                h(
-                  "div",
-                    { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: 13, fontWeight: 600, color: "#e2e8f0" } }, p.name),
-                  h(
-                    "div",
-                      {
-                        style: {
-                          fontSize: 10.5,
-                          fontFamily: MONO,
-                          color: "#64748b",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        },
-                      },
-                    p.path
-                  ),
-                  h(
-                    "div",
-                      { style: { display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" } },
-                    p.harness && h(Chip, null, p.harness),
-                    p.scope && h(Chip, null, p.scope),
-                    p.setup_done && h(Chip, { tone: "#34d399" }, "set up"),
-                    p.git && h(Chip, { tone: "#67e8f9" }, h(GitBranch, { size: 10 }), "git")
-                  )
-                ),
-                h(
-                  "button",
-                    {
-                      style: { ...btnStyle("ghost"), padding: "3px 7px", borderRadius: 6, cursor: "pointer" },
-                      title: "Remove from registry (folder untouched)",
-                      onClick: (e) => {
-                        e.stopPropagation()
-                        doRemove(p)
-                      },
-                    },
-                    h(Trash2, { size: 12, style: { color: "#64748b" } })
-                  )
-              )
-            })
-          )
-        ),
-        // right: selected project
-        h(
-          "div",
-            { key: "right", style: { display: "flex", flexDirection: "column", gap: 12, minWidth: 0 } },
-          !proj
-            ? h(
-                Card,
-                  { title: "No project selected", icon: h(Folder, { size: 14, style: { color: "#64748b" } }) },
-                h(
-                  "div",
-                    { style: { fontSize: 12.5, color: "#64748b", lineHeight: 1.7 } },
-                  "Pick a project on the left, or add a new local folder. The repo comes second - start with a plain folder and let the app install and configure the aidlc CLI for you.")
-              )
-            : h(
-                "div",
-                  { key: "proj", style: { display: "flex", flexDirection: "column", gap: 12 } },
-              h(
-                "div",
-                  { style: { display: "flex", alignItems: "center", gap: 10 } },
-                h("div", { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: 16, fontWeight: 700 } }, proj.name),
-                  h(
-                    "div",
-                      { style: { fontSize: 11, fontFamily: MONO, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
-                    proj.path
-                  )
-                ),
-                pstate &&
-                  h(Chip, { tone: pstate.setup_done ? "#34d399" : "#fbbf24" },
-                    pstate.setup_done ? "set up" : "needs setup")
-              ),
-              !proj.setup_done &&
-                h(SetupWizard, {
-                  proj,
-                  state,
-                  cliOk,
-                  busy,
-                  onInstallCli: doInstall,
-                  onRun: (harness, preset, scope) => {
-                    if (
-                      window.confirm(
-                        `Run "aidlc config --harness ${harness}" in ${proj.path}?\n\nThis creates the AI-DLC engine, ${harness} glue and your workspace (about 420 files), then records your preset (${preset}) and runs doctor.`
-                      )
-                    )
-                      act(() => startSetup(proj.id, harness, preset, scope))
-                  },
-                }),
-              proj.setup_done &&
-                (pstate ? (
-                  h(ProjectDashboard, {
-                    pstate,
-                    busy,
-                    onDoctor: doDoctor,
-                    onGitInit: () => act(() => gitInit(proj.id)),
-                    onRefresh: refreshProject,
-                    onRunSetup: () => setSel(null),
-                  })
-                ) : (
-                  h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading project state…")
-                ))
-            )
-        )
-      ),
-      // log console
-      h(
-        "div",
-          { key: "log", style: { marginTop: 16 } },
-        h(
-          "div",
-            { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
-          h("span", { style: { fontSize: 12, fontWeight: 600, color: "#94a3b8" } }, "Live log"),
-          h("div", { style: { flex: 1 } }),
-          h(
-            "label",
-              { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b", cursor: "pointer" } },
-            h("input", {
-              type: "checkbox",
-              checked: autoScroll,
-              onChange: (e) => setAutoScroll(e.target.checked),
-              style: { accentColor: "#34d399" },
-            }),
-            "auto-scroll")
-        ),
-        h(LogConsole, { lines, autoScroll })
-      )
+      // the two contexts, never blended: admin portfolio OR one focused project
+      sel && proj
+        ? h(WorkingView, {
+            proj,
+            pstate,
+            busy,
+            state,
+            cliOk,
+            onBack: () => setSel(null),
+            onDoctor: doDoctor,
+            onGitInit: () => act(() => gitInit(proj.id)),
+            onRefresh: refreshProject,
+            onInstallCli: doInstall,
+            onRunSetup: doRunSetup,
+            lines,
+            autoScroll,
+            setAutoScroll,
+          })
+        : h(ProjectsView, {
+            state,
+            np,
+            setNp,
+            busy,
+            onOpen: (id) => setSel(id),
+            onAdd: doAdd,
+            onRemove: doRemove,
+          })
     )
 }

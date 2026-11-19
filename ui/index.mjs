@@ -1150,17 +1150,65 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
   const row = (key, dot, label, sub, extra) =>
     h(
       "div",
-      { key, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12 } },
-      h(Dot, { tone: dot }),
-      h("span", { style: { fontWeight: 600, color: "#e2e8f0", minWidth: 116 } }, label),
-      h("span", { style: { color: "#64748b", flex: 1, fontFamily: MONO, fontSize: 11 } }, sub),
-      extra
+      {
+        key,
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+          padding: "7px 9px",
+          borderRadius: 8,
+          background: "rgba(148,163,184,.06)",
+        },
+      },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 7 } },
+        h(Dot, { tone: dot }),
+        h(
+          "span",
+          { style: { fontWeight: 600, color: "#e2e8f0", fontSize: 12, flex: 1, minWidth: 0 } },
+          label
+        ),
+        extra
+      ),
+      sub
+        ? h(
+            "div",
+            {
+              style: {
+                fontSize: 10.5,
+                color: "#64748b",
+                fontFamily: MONO,
+                paddingLeft: 15,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+            },
+            sub
+          )
+        : null
     )
 
   const children = [
     row("gh", ghDot, "GitHub", ghSub),
     row("ir", irDot, "Issue Radar", irSub),
-    h("div", { key: "sep", style: { height: 1, background: "rgba(148,163,184,.15)", margin: "2px 0" } }),
+    h(
+      "div",
+      {
+        key: "hlabel",
+        style: {
+          fontSize: 10,
+          fontWeight: 700,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: ".07em",
+          marginTop: 2,
+        },
+      },
+      "Harnesses"
+    ),
   ]
   ;(H.all || []).forEach((hh) => {
     const isDep = deployed.has(hh)
@@ -1170,7 +1218,7 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
         "hh-" + hh,
         isDep ? DOT.green : DOT.red,
         hh,
-        isDep ? "set up" : "not set up",
+        (isDep ? "set up" : "not set up") + (isDep && launch.hint ? " · " + launch.hint : ""),
         !isDep
           ? h(
               Button,
@@ -1182,9 +1230,7 @@ function StatusDashboard({ pstate, proj, onRunSetup, busy }) {
                 title: "Run `aidlc config --harness " + hh + "` to deploy it here",
               },
               "Deploy")
-          : launch.hint
-            ? h("span", { style: { fontSize: 10.5, color: "#64748b" } }, launch.hint)
-            : null
+          : null
       )
     )
   })
@@ -1360,8 +1406,6 @@ function WorkingView({
         )
       ),
       ),
-      // mini status dashboard: GitHub / Issue-Radar / per-harness readiness
-      pstate && h(StatusDashboard, { pstate, proj, onRunSetup, busy }),
       // the one project's surface: setup wizard (pre-setup) or dashboard (post-setup)
       !proj.setup_done
         ? h(SetupWizard, { proj, state, cliOk, busy, onInstallCli, onRun: (harness, preset, scope) => onRunSetup(harness, preset, scope) })
@@ -1393,12 +1437,19 @@ function WorkingView({
         h(LogConsole, { lines, autoScroll })
       )
     ),
-    // right column: the project's folder tree + open-in-explorer
+    // middle column: the project's folder tree + open-in-explorer
     h(
       "div",
       { style: { flex: "0 0 280px", width: 280, display: "flex", flexDirection: "column", gap: 12 } },
       h(FileTree, { pid: proj.id, onOpenPath: openPath })
-    )
+    ),
+    // right column (thinner): the mini status dashboard
+    pstate &&
+      h(
+        "div",
+        { style: { flex: "0 0 220px", width: 220, display: "flex", flexDirection: "column", gap: 12 } },
+        h(StatusDashboard, { pstate, proj, onRunSetup, busy })
+      )
   )
 }
 
@@ -2180,7 +2231,7 @@ export default function SiCrewappAidlcApp() {
     "div",
       {
         className: "px-6 pt-4 pb-8",
-        style: { maxWidth: 1180, margin: "0 auto" },
+        style: { width: "100%" },
       },
       // header
       h(

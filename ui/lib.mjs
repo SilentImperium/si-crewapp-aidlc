@@ -124,6 +124,12 @@ function radarBody(owner, repo, provider, host) {
   return b
 }
 
+// Connect a repo with issue-radar: register it so a crew can bind to it.
+// issue-radar gates EVERY crew/issue route on the repo being connected first
+// ("not connected — call /connect first"), so call this before radarCreateCrew.
+// Takes the full repo URL (e.g. https://github.com/owner/repo).
+export const radarConnect = (url) => radarFetch("POST", "/connect", { url })
+
 export const radarCrews = (owner, repo, provider, host) =>
   radarFetch("GET", `/crews?${radarQ(owner, repo, provider, host)}`)
 export const radarCrew = (owner, repo, id, provider, host) =>

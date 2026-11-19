@@ -39,6 +39,7 @@ import {
   openInExplorer,
   getGhStatus,
   hostOnGithub,
+  radarConnect,
   radarCrews,
   radarCrew,
   radarCreateCrew,
@@ -1645,6 +1646,8 @@ function CrewCockpit({ proj, onSetMode }) {
     setEnabling(true)
     setRadarErr("")
     try {
+      // issue-radar gates crew creation on the repo being connected first
+      await radarConnect("https://github.com/" + owner + "/" + repo)
       const r = await radarCreateCrew(owner, repo, { name: crewName })
       const crew = r.crew || {}
       // arm the trigger: a new issue wakes the crew

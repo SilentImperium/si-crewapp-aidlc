@@ -401,8 +401,7 @@ function SetupWizard({ proj, state, onRun, busy, onInstallCli, cliOk }) {
           },
             h(Download, { size: 12 }),
             "Install CLI")
-        )
-      ),
+        ),
     h(
       "div",
       { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1.4fr", gap: 10 } },
@@ -639,8 +638,7 @@ function ProjectDashboard({ pstate, busy, onDoctor, onGitInit, onRefresh, onRunS
             }, h(X, { size: 11 })),
           ),
           doctor.raw || "(no output)"
-        )
-      ),
+        ),
     // audit tail
     (pstate.audit_tail || []).length > 0 &&
       h(

@@ -47,6 +47,152 @@ export const installCli = () => http("POST", "cli/install", {})
 export const tailLogs = (after, limit) =>
   http("GET", `logs/tail?after=${encodeURIComponent(after || 0)}&limit=${limit || 300}`)
 
+// -- crew / forge / terminal (companion-app + cockpit surface) -------------
+
+// AIDLC backend: the app owns issue creation (issue-radar has no create-issue
+// route) and the local terminal. These hit the app's own /api/* surface.
+export const getGitRemote = (pid) => http("GET", `projects/${pid}/git-remote`)
+export const createIssue = (pid, d) => http("POST", `projects/${pid}/issue`, d)
+export const setMode = (pid, mode, crew) => http("POST", `projects/${pid}/mode`, { mode, crew })
+export const spawnTerminal = (pid, command) =>
+  http("POST", `projects/${pid}/terminal`, { command: command ?? null })
+export const terminalInput = (tid, data) => http("POST", `terminals/${tid}/input`, { data })
+export const terminalResize = (tid, cols, rows) =>
+  http("POST", `terminals/${tid}/resize`, { cols, rows })
+export const killTerminal = (tid) => http("DELETE", `terminals/${tid}`)
+
+// Live terminal I/O stream. Same reconnect pattern as the log stream: the
+// gateway cuts the proxied SSE every ~30s, so EventSource reconnects and the
+// backend keeps the session's queue (the reader thread owns it, not the socket).
+export function subscribeTerminal(tid, { onOut, onExit } = {}) {
+  let es = null
+  let closed = false
+  let timer = null
+  let failCount = 0
+  let openedAt = 0
+
+  function open() {
+    if (closed) return
+    openedAt = Date.now()
+    try {
+      es = new EventSource(apiPath(`terminals/${tid}/stream`))
+    } catch {
+      timer = setTimeout(open, 1000)
+      return
+    }
+    es.addEventListener("out", (e) => {
+      try {
+        onOut && onOut(JSON.parse(e.data))
+      } catch {
+        /* ignore malformed */
+      }
+    })
+    es.addEventListener("exit", (e) => {
+      let d = null
+      try {
+        d = JSON.parse(e.data)
+      } catch {
+        /* ignore */
+      }
+      onExit && onExit(d)
+      try {
+        es.close()
+      } catch {
+        /* already closed */
+      }
+    })
+    es.onerror = () => {
+      try {
+        es.close()
+      } catch {
+        /* already closed */
+      }
+      const instantFail = Date.now() - openedAt < 500
+      if (instantFail) failCount += 1
+      else failCount = 0
+      if (closed) return
+      if (failCount >= 4) return // session likely gone; stop hammering
+      timer = setTimeout(open, 800)
+    }
+  }
+
+  open()
+  return {
+    close() {
+      closed = true
+      if (timer) clearTimeout(timer)
+      try {
+        es && es.close()
+      } catch {
+        /* already closed */
+      }
+    },
+  }
+}
+
+// -- issue-radar (companion crew service, app-to-app "case a") ------------
+//
+// issue-radar is a SEPARATE app. Its routes are served by the gateway at the
+// same-origin path /api/apps/issue-radar/* (its own route prefix), NOT under
+// this app's /apps/si-crewapp-aidlc/api/*. The dashboard session cookie
+// authenticates the call, so the browser (this app's UI) is the caller -- the
+// crew routes refuse a backend-to-backend internal secret and require the
+// owner's cookie. We never re-implement issue-radar; we call it as a service.
+
+const RADAR = "/api/apps/issue-radar"
+
+async function radarFetch(method, path, body) {
+  const res = await fetch(`${RADAR}${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  let data = null
+  try {
+    data = await res.json()
+  } catch {
+    /* non-JSON */
+  }
+  if (!res.ok) {
+    const msg = (data && (data.error || data.detail)) || `issue-radar ${method} ${path} failed: HTTP ${res.status}`
+    const err = new Error(msg)
+    err.status = res.status
+    err.data = data
+    throw err
+  }
+  return data
+}
+
+// owner/repo -> query string (provider/host optional; default to public GitHub).
+function radarQ(owner, repo, provider, host) {
+  const q = new URLSearchParams()
+  q.set("owner", owner)
+  q.set("repo", repo)
+  if (provider) q.set("provider", provider)
+  if (host) q.set("host", host)
+  return q.toString()
+}
+function radarBody(owner, repo, provider, host) {
+  const b = { owner, repo }
+  if (provider) b.provider = provider
+  if (host) b.host = host
+  return b
+}
+
+export const radarCrews = (owner, repo, provider, host) =>
+  radarFetch("GET", `/crews?${radarQ(owner, repo, provider, host)}`)
+export const radarCrew = (owner, repo, id, provider, host) =>
+  radarFetch("GET", `/crew?${radarQ(owner, repo, provider, host)}&id=${encodeURIComponent(id)}`)
+export const radarCreateCrew = (owner, repo, spec, provider, host) =>
+  radarFetch("POST", "/crews", { ...radarBody(owner, repo, provider, host), ...spec })
+export const radarCrewSettings = (owner, repo, patch, provider, host) =>
+  radarFetch("PUT", "/crews/settings", { ...radarBody(owner, repo, provider, host), settings: patch })
+export const radarIssues = (owner, repo, provider, host) =>
+  radarFetch("GET", `/issues?${radarQ(owner, repo, provider, host)}`)
+export const radarPulls = (owner, repo, provider, host) =>
+  radarFetch("GET", `/pulls?${radarQ(owner, repo, provider, host)}`)
+
 // Live log stream.
 //
 // Opens an EventSource against /logs/stream. The gateway's per-request timeout

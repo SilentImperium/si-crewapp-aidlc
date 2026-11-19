@@ -59,6 +59,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+# Sibling backend modules (same directory). server.py is the entry point the
+# gateway spawns, so its own directory is sys.path[0] and these import cleanly.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import forge
+import terminal
+
 APP_NAME = os.environ.get("KIROCREW_APP_NAME", "si-crewapp-aidlc")
 APP_VERSION = "0.1.0"
 PROXY_SECRET = os.environ.get("KIROCREW_PROXY_SECRET", "")
@@ -294,6 +300,10 @@ def create_project(d):
             "scope": None,
             "setup_done": False,
             "git": os.path.isdir(os.path.join(p, ".git")),
+            # "solo" = just you + the harness; "crew" = a named issue-radar crew
+            # is enabled on this repo and wakes on new issues.
+            "mode": "solo",
+            "crew": None,
             "created_at": time.time(),
             "updated_at": time.time(),
         }
@@ -914,6 +924,88 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, tail_logs(qs))
             if method == "GET" and api == "logs/stream":
                 return self._sse(qs)
+
+            # -- crew / forge / terminal (companion-app + cockpit surface) -----
+            m = re.fullmatch(r"projects/([^/]+)/git-remote", api)
+            if m and method == "GET":
+                return self._json(200, forge.git_remote(get_project(m.group(1))["path"]))
+            m = re.fullmatch(r"projects/([^/]+)/issue", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                proj = get_project(m.group(1))
+                try:
+                    created = forge.create_issue(
+                        proj["path"],
+                        str(d.get("title") or ""),
+                        str(d.get("body") or ""),
+                        d.get("labels"),
+                    )
+                except forge.ForgeError as e:
+                    return self._json(e.status, {"error": e.msg})
+                _append_line("[si-crewapp-aidlc] issue created on %s: %s" % (proj["name"], created.get("url") or created.get("number")))
+                return self._json(201, created)
+            m = re.fullmatch(r"projects/([^/]+)/mode", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                mode = str(d.get("mode") or "").strip()
+                if mode not in ("solo", "crew"):
+                    raise ApiError(400, "mode must be 'solo' or 'crew'")
+                proj = get_project(m.group(1))
+                with LOCK:
+                    proj["mode"] = mode
+                    # Persist which issue-radar crew this project enabled, so the
+                    # cockpit can highlight it. The crew itself lives in
+                    # issue-radar; this is just a pointer back to it.
+                    crew = d.get("crew")
+                    if isinstance(crew, dict):
+                        proj["crew"] = {
+                            "id": str(crew.get("id") or ""),
+                            "name": str(crew.get("name") or ""),
+                            "owner": str(crew.get("owner") or ""),
+                            "repo": str(crew.get("repo") or ""),
+                        }
+                    elif mode == "solo":
+                        proj["crew"] = None
+                    proj["updated_at"] = time.time()
+                    _save_state()
+                return self._json(200, {"id": proj["id"], "mode": mode, "crew": proj.get("crew")})
+
+            m = re.fullmatch(r"projects/([^/]+)/terminal", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                proj = get_project(m.group(1))
+                # command is optional: the UI can launch the harness agent, or
+                # leave it None for a plain interactive shell.
+                command = d.get("command")
+                command = str(command) if command is not None else None
+                sess = terminal.spawn(proj["path"], command)
+                _append_line("[si-crewapp-aidlc] terminal %s spawned (%s, cwd %s)" % (sess["id"], command or "shell", proj["path"]))
+                return self._json(201, {"terminal_id": sess["id"], "pid": sess["pid"], "shell": sess["shell"]})
+
+            m = re.fullmatch(r"terminals/([^/]+)/stream", api)
+            if m and method == "GET":
+                return self._terminal_stream(m.group(1))
+            m = re.fullmatch(r"terminals/([^/]+)/input", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                tid = m.group(1)
+                if not terminal.has(tid):
+                    return self._json(404, {"error": "no such terminal: %s" % tid})
+                terminal.send_input(tid, terminal.base64_decode(str(d.get("data") or "")))
+                return self._json(200, {"ok": True})
+            m = re.fullmatch(r"terminals/([^/]+)/resize", api)
+            if m and method == "POST":
+                d = _json_body(body)
+                tid = m.group(1)
+                if not terminal.has(tid):
+                    return self._json(404, {"error": "no such terminal: %s" % tid})
+                terminal.resize(tid, int(d.get("cols") or 80), int(d.get("rows") or 24))
+                return self._json(200, {"ok": True})
+            m = re.fullmatch(r"terminals/([^/]+)", api)
+            if m and method == "DELETE":
+                killed = terminal.kill(m.group(1))
+                return self._json(200 if killed else 404, {"ok": killed})
+
             return self._json(404, {"error": "no such api: %s %s" % (method, api)})
         except ApiError as e:
             return self._json(e.status, {"error": e.msg, **e.extra})
@@ -977,6 +1069,41 @@ class Handler(BaseHTTPRequestHandler):
         out += "event: %s\ndata: %s\n\n" % (event, json.dumps(payload))
         self.wfile.write(out.encode("utf-8"))
         self.wfile.flush()
+
+    def _terminal_stream(self, tid):
+        """SSE: stream one terminal session's I/O to xterm.js.
+
+        Emits ``out`` events (``{"data": <base64>}``) as the pty produces output
+        and a final ``exit`` event (``{"exit": <code>}``) when the process ends.
+        15s heartbeats keep the gateway's proxy from idling the connection out.
+        """
+        try:
+            sess = terminal.get(tid)
+        except KeyError:
+            return self._json(404, {"error": "no such terminal: %s" % tid})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "keep-alive")
+        self.close_connection = True
+        self.end_headers()
+        try:
+            self.wfile.write(b"retry: 500\n\n")
+            while True:
+                try:
+                    item = sess["out_q"].get(timeout=15)
+                except queue.Empty:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    continue
+                self._sse_event("out" if "data" in item else "exit", item)
+                if "exit" in item:
+                    break
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            self.close_connection = True
 
 
 def _json_body(body):

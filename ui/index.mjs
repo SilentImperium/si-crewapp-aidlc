@@ -31,6 +31,20 @@ import {
   subscribeLogs,
   fmtAgo,
   fmtTime,
+  getGitRemote,
+  createIssue,
+  setMode,
+  spawnTerminal,
+  terminalInput,
+  terminalResize,
+  killTerminal,
+  subscribeTerminal,
+  radarCrews,
+  radarCrew,
+  radarCreateCrew,
+  radarCrewSettings,
+  radarIssues,
+  radarPulls,
 } from "./lib.mjs"
 
 const React = window.__kirocrew_modules.react
@@ -55,6 +69,13 @@ const {
   X,
   ArrowLeft,
   ChevronRight,
+  Users,
+  Bot,
+  ListChecks,
+  MessageSquare,
+  Zap,
+  Square,
+  RefreshCw,
 } = window.__kirocrew_modules["lucide-react"]
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -826,6 +847,7 @@ function WorkingView({
   onRefresh,
   onInstallCli,
   onRunSetup,
+  onSetMode,
   lines,
   autoScroll,
   setAutoScroll,
@@ -865,6 +887,8 @@ function WorkingView({
       : pstate
         ? h(ProjectDashboard, { pstate, busy, onDoctor, onGitInit, onRefresh })
         : h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading project state…"),
+    // the crew cockpit: mode toggle + (crew mode) dashboard/kanban/intake + terminal
+    h(CrewCockpit, { proj, pstate, onSetMode }),
     // live log (belongs to the working context, not the admin one)
     h(
       "div",
@@ -887,6 +911,705 @@ function WorkingView({
       ),
       h(LogConsole, { lines, autoScroll })
     )
+  )
+}
+
+// ---------------------------------------------------------------------------
+// crew cockpit - issue-radar as a companion service (app-to-app, "case a")
+//
+// SI AIDLC is the client; issue-radar is the crew service. They stay decoupled
+// and meet only at the shared repo: we create the crew + arm wake-on-new-work
+// through issue-radar's HTTP surface, we mint GitHub issues ourselves (issue-
+// radar has no create-issue route), and issue-radar's watcher wakes the crew.
+
+// Solo / Crew-Enabled mode toggle.
+function ModeToggle({ mode, onMode }) {
+  const opt = (m, label, icon) =>
+    h(
+      "button",
+      {
+        onClick: () => onMode(m),
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "5px 12px",
+          borderRadius: 999,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          border: mode === m ? "1px solid rgba(52,211,153,.6)" : "1px solid rgba(148,163,184,.3)",
+          background: mode === m ? "rgba(52,211,153,.15)" : "transparent",
+          color: mode === m ? "#34d399" : "#94a3b8",
+        },
+      },
+      icon,
+      label
+    )
+  return h(
+    "div",
+    {
+      style: {
+        display: "inline-flex",
+        gap: 4,
+        alignItems: "center",
+        background: "rgba(2,6,23,.5)",
+        padding: 4,
+        borderRadius: 999,
+        border: "1px solid rgba(148,163,184,.2)",
+      },
+    },
+    opt("solo", "Solo", h(Users, { size: 12 })),
+    opt("crew", "Crew", h(Bot, { size: 12 }))
+  )
+}
+
+// A compact stat tile for the status dashboard.
+function StatTile({ icon, label, value, sub, tone = "#e2e8f0" }) {
+  return h(
+    "div",
+    {
+      style: {
+        border: "1px solid rgba(148,163,184,.22)",
+        borderRadius: 12,
+        background: "rgba(15,23,42,.35)",
+        padding: 13,
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+        flex: "1 1 140px",
+        minWidth: 140,
+      },
+    },
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 7 } },
+      icon,
+      h(
+        "span",
+        {
+          style: {
+            fontSize: 10.5,
+            fontWeight: 600,
+            color: "#94a3b8",
+            letterSpacing: ".05em",
+            textTransform: "uppercase",
+          },
+        },
+        label
+      )
+    ),
+    h("div", { style: { fontSize: 22, fontWeight: 700, color: tone, lineHeight: 1 } }, value),
+    sub ? h("div", { style: { fontSize: 11, color: "#64748b" } }, sub) : null
+  )
+}
+
+// One kanban card (an issue or a PR).
+function KanbanCard({ item, isPr }) {
+  const labels = (item.labels || []).slice(0, 3)
+  const checks = item.checks_state
+  return h(
+    "div",
+    {
+      style: {
+        border: "1px solid rgba(148,163,184,.2)",
+        borderRadius: 8,
+        background: "rgba(15,23,42,.5)",
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+      },
+    },
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#64748b", fontFamily: MONO } },
+      h("span", { style: { color: "#67e8f9" } }, isPr ? "!" : "#", item.number),
+      isPr &&
+        checks &&
+        h(
+          Chip,
+          {
+            tone:
+              checks === "success"
+                ? "#34d399"
+                : checks === "failure"
+                  ? "#f87171"
+                  : checks === "running"
+                    ? "#fbbf24"
+                    : "#94a3b8",
+            bg: "transparent",
+          },
+          checks
+        ),
+      h("span", { style: { flex: 1 } })
+    ),
+    h(
+      "div",
+      {
+        style: {
+          fontSize: 12.5,
+          color: "#e2e8f0",
+          fontWeight: 500,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        },
+        title: item.title,
+      },
+      item.title
+    ),
+    labels.length
+      ? h(
+          "div",
+          { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+          labels.map((l) => h(Chip, { key: l, tone: "#94a3b8" }, l))
+        )
+      : null
+  )
+}
+
+// Backlog / In progress / Done. Driven by the live issue + PR lists from
+// issue-radar. An open issue is "in progress" when an open PR references it.
+function KanbanBoard({ issues, pulls }) {
+  const openIssues = (issues || []).filter((i) => !i.state || i.state === "open")
+  const closedIssues = (issues || []).filter((i) => i.state === "closed").slice(0, 12)
+  const openPulls = (pulls || []).filter((p) => !p.state || p.state === "open")
+  const mergedPulls = (pulls || []).filter((p) => p.merged_at).slice(0, 12)
+
+  const linked = new Set()
+  for (const pr of openPulls) {
+    const m = (pr.body || "").match(/(?:fixes|closes|resolves)\s+#(\d+)/i)
+    if (m) linked.add(Number(m[1]))
+  }
+  const inProgressIssues = openIssues.filter((i) => linked.has(i.number))
+  const backlog = openIssues.filter((i) => !linked.has(i.number))
+
+  const empty = (t) => h("div", { style: { fontSize: 11, color: "#475569" } }, t)
+  const column = (title, tone, children) =>
+    h(
+      "div",
+      {
+        style: {
+          flex: "1 1 0",
+          minWidth: 190,
+          border: "1px solid rgba(148,163,184,.18)",
+          borderRadius: 10,
+          background: "rgba(2,6,23,.4)",
+          display: "flex",
+          flexDirection: "column",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 11px",
+            borderBottom: "1px solid rgba(148,163,184,.15)",
+            fontSize: 11,
+            fontWeight: 700,
+            color: tone,
+            letterSpacing: ".05em",
+            textTransform: "uppercase",
+          },
+        },
+        title
+      ),
+      h(
+        "div",
+        {
+          style: {
+            padding: 9,
+            display: "flex",
+            flexDirection: "column",
+            gap: 7,
+            overflowY: "auto",
+            maxHeight: 280,
+          },
+        },
+        children
+      )
+    )
+
+  return h(
+    "div",
+    { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+    column(
+      `Backlog (${backlog.length})`,
+      "#94a3b8",
+      backlog.length ? backlog.map((i) => h(KanbanCard, { key: "i" + i.number, item: i })) : empty("no open issues")
+    ),
+    column(
+      `In progress (${openPulls.length + inProgressIssues.length})`,
+      "#34d399",
+      openPulls.length || inProgressIssues.length
+        ? [
+            ...openPulls.map((p) => h(KanbanCard, { key: "p" + p.number, item: p, isPr: true })),
+            ...inProgressIssues.map((i) => h(KanbanCard, { key: "i" + i.number, item: i })),
+          ]
+        : empty("no work in flight")
+    ),
+    column(
+      `Done (${closedIssues.length + mergedPulls.length})`,
+      "#67e8f9",
+      closedIssues.length || mergedPulls.length
+        ? [
+            ...mergedPulls.map((p) => h(KanbanCard, { key: "m" + p.number, item: p, isPr: true })),
+            ...closedIssues.map((i) => h(KanbanCard, { key: "c" + i.number, item: i })),
+          ]
+        : empty("nothing completed yet")
+    )
+  )
+}
+
+// AI intake: describe the work -> mint a GitHub issue (the trigger that wakes
+// the crew). issue-radar has no create-issue route, so we own this via `gh`.
+function IntakeForm({ pid, onCreated }) {
+  const [text, setText] = useState("")
+  const [label, setLabel] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState(null)
+  const [err, setErr] = useState("")
+
+  const submit = async () => {
+    if (!text.trim()) return
+    setBusy(true)
+    setErr("")
+    setCreated(null)
+    try {
+      const parts = text.trim().split("\n")
+      const title = (parts[0] || "New work").slice(0, 120)
+      const body = parts.slice(1).join("\n")
+      const r = await createIssue(pid, { title, body, labels: label.trim() ? [label.trim()] : undefined })
+      setCreated(r)
+      setText("")
+      setLabel("")
+      onCreated && onCreated(r)
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return h(
+    "div",
+    { style: { display: "flex", flexDirection: "column", gap: 8 } },
+    h(
+      "textarea",
+      {
+        style: { ...inputStyle, minHeight: 72, resize: "vertical", fontFamily: "inherit" },
+        value: text,
+        placeholder: "What do you want to work on, fix, or add? A sentence or two is enough.",
+        onChange: (e) => setText(e.target.value),
+      }
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+      h(
+        "input",
+        {
+          style: { ...inputStyle, width: 170, flex: "0 0 auto" },
+          value: label,
+          placeholder: "label (optional)",
+          onChange: (e) => setLabel(e.target.value),
+        }
+      ),
+      h(
+        Button,
+        { onClick: submit, disabled: busy || !text.trim() },
+        busy ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } }) : h(MessageSquare, { size: 13 }),
+        "Create issue & wake crew"
+      ),
+      created &&
+        h(
+          "span",
+          { style: { fontSize: 11.5, color: "#34d399", display: "inline-flex", alignItems: "center", gap: 5 } },
+          h(CircleCheck, { size: 12 }),
+          created.url
+            ? h("a", { href: created.url, target: "_blank", rel: "noreferrer", style: { color: "#34d399" } }, created.url)
+            : `issue #${created.number} created`
+        )
+    ),
+    err && h("div", { style: { fontSize: 11.5, color: "#f87171" } }, err)
+  )
+}
+
+// Self-contained terminal: streams a local shell's I/O (spawned by the backend
+// PTY bridge) and forwards input. No xterm.js / no build step - ANSI stripped,
+// output in a scroll pane, a command line at the bottom.
+function TerminalWidget({ pid, launchCmd }) {
+  const [tid, setTid] = useState(null)
+  const [out, setOut] = useState("")
+  const [exited, setExited] = useState(null)
+  const [cmd, setCmd] = useState("")
+  const [spawning, setSpawning] = useState(false)
+  const subRef = useRef(null)
+  const preRef = useRef(null)
+
+  const spawn = useCallback(
+    async (command) => {
+      if (subRef.current) subRef.current.close()
+      setSpawning(true)
+      setOut("")
+      setExited(null)
+      try {
+        const r = await spawnTerminal(pid, command)
+        setTid(r.terminal_id)
+        subRef.current = subscribeTerminal(r.terminal_id, {
+          onOut: (d) => {
+            if (d && d.data) {
+              let s
+              try {
+                s = atob(d.data)
+              } catch {
+                return
+              }
+              setOut((prev) => (prev.length > 60000 ? prev.slice(-40000) : prev) + s)
+            }
+          },
+          onExit: (d) => setExited(d && d.exit != null ? d.exit : -1),
+        })
+      } catch (e) {
+        setOut("terminal spawn failed: " + (e.message || e))
+      } finally {
+        setSpawning(false)
+      }
+    },
+    [pid]
+  )
+
+  const send = () => {
+    const c = cmd
+    if (!tid || !c) return
+    try {
+      terminalInput(tid, btoa(c + "\r")).catch(() => {})
+      setOut((prev) => prev + "\n> " + c + "\n")
+      setCmd("")
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight
+  }, [out])
+
+  useEffect(
+    () => () => {
+      if (subRef.current) subRef.current.close()
+    },
+    []
+  )
+
+  const clean = out.replace(/\x1b\[[0-9;?]*[ -~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "")
+  const running = tid != null && exited == null
+
+  return h(
+    "div",
+    { style: { display: "flex", flexDirection: "column", gap: 8 } },
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+      h(Button, { small: true, kind: "ghost", onClick: () => spawn(null), disabled: spawning || running },
+        h(Terminal, { size: 12 }),
+        "Shell"),
+      launchCmd &&
+        h(
+          Button,
+          { small: true, kind: "ghost", onClick: () => spawn(launchCmd), disabled: spawning || running },
+          h(Rocket, { size: 12 }),
+          "Launch harness"
+        ),
+      tid &&
+        h(Button, { small: true, kind: "danger", onClick: () => killTerminal(tid).catch(() => {}) },
+          h(Square, { size: 12 }),
+          "Stop"),
+      h("div", { style: { flex: 1 } }),
+      tid &&
+        h(
+          "span",
+          { style: { fontSize: 11, color: running ? "#34d399" : "#64748b", fontFamily: MONO } },
+          running ? "· running" : "· exited (" + exited + ")"
+        )
+    ),
+    h(
+      "div",
+      {
+        ref: preRef,
+        style: {
+          height: 240,
+          overflow: "auto",
+          background: "rgba(2,6,23,.85)",
+          border: "1px solid rgba(148,163,184,.25)",
+          borderRadius: 8,
+          padding: "10px 12px",
+          fontFamily: MONO,
+          fontSize: 11.5,
+          lineHeight: 1.5,
+          color: "#cbd5e1",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        },
+      },
+      clean
+        ? clean
+        : h(
+            "span",
+            { style: { color: "#475569" } },
+            spawning ? "spawning…" : "no terminal yet - start a shell or launch the harness above"
+          )
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8 } },
+      h(
+        "input",
+        {
+          style: { ...inputStyle, flex: 1 },
+          value: cmd,
+          placeholder: running ? "type a command and press Enter (sent to the live shell)" : "start a terminal first",
+          disabled: !running,
+          onChange: (e) => setCmd(e.target.value),
+          onKeyDown: (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              send()
+            }
+          },
+        }
+      ),
+      h(Button, { small: true, onClick: send, disabled: !running || !cmd }, "Send")
+    )
+  )
+}
+
+// The crew cockpit: mode toggle + status dashboard + "enable a crew" auto-setup
+// + kanban + AI intake + terminal. The dashboard/kanban/intake show in crew
+// mode; the mode toggle and terminal are always present.
+function CrewCockpit({ proj, pstate, onSetMode }) {
+  const pid = proj.id
+  const mode = proj.mode || "solo"
+  const [remote, setRemote] = useState(null)
+  const [radar, setRadar] = useState(null)
+  const [radarErr, setRadarErr] = useState("")
+  const [crewName, setCrewName] = useState(
+    (proj.name || "crew").trim().replace(/\s+/g, "-").toLowerCase() + "-crew"
+  )
+  const [enabling, setEnabling] = useState(false)
+
+  // the git remote (owner/repo) the crew binds to
+  useEffect(() => {
+    let stop = false
+    getGitRemote(pid).then((r) => !stop && setRemote(r)).catch(() => {})
+    return () => {
+      stop = true
+    }
+  }, [pid])
+
+  const owner = remote && remote.owner
+  const repo = remote && remote.repo
+  const hasCrew = mode === "crew"
+
+  const load = useCallback(async () => {
+    if (!owner || !repo) return
+    try {
+      const [c, i, p] = await Promise.all([radarCrews(owner, repo), radarIssues(owner, repo), radarPulls(owner, repo)])
+      setRadar({
+        crews: c.crews || [],
+        counts: c.counts || {},
+        settings: c.settings || {},
+        issues: i.issues || [],
+        pulls: p.pulls || [],
+      })
+      setRadarErr("")
+    } catch (e) {
+      setRadarErr(e.message || String(e))
+    }
+  }, [owner, repo])
+
+  useEffect(() => {
+    if (!owner || !repo) return
+    load()
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [load, owner, repo])
+
+  const enableCrew = async () => {
+    if (!owner || !repo) return
+    setEnabling(true)
+    setRadarErr("")
+    try {
+      const r = await radarCreateCrew(owner, repo, { name: crewName })
+      const crew = r.crew || {}
+      // arm the trigger: a new issue wakes the crew
+      await radarCrewSettings(owner, repo, { crew_wake_on_new_work: true })
+      onSetMode("crew", { id: crew.id, name: crew.name, owner, repo })
+      await load()
+    } catch (e) {
+      setRadarErr("enable crew: " + (e.message || String(e)))
+    } finally {
+      setEnabling(false)
+    }
+  }
+
+  const counts = (radar && radar.counts) || {}
+  const issues = (radar && radar.issues) || []
+  const pulls = (radar && radar.pulls) || []
+  const crews = (radar && radar.crews) || []
+  const openIssues = issues.filter((i) => !i.state || i.state === "open").length
+  const openPulls = pulls.filter((p) => !p.state || p.state === "open").length
+  const wakeOn = radar && radar.settings && radar.settings.crew_wake_on_new_work
+
+  return h(
+    "div",
+    { style: { display: "flex", flexDirection: "column", gap: 12 } },
+    // mode toggle
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+      h(ModeToggle, { mode, onMode: (m) => onSetMode(m, null) }),
+      h("span", { style: { fontSize: 11, color: "#64748b" } },
+        hasCrew
+          ? "a named issue-radar crew works this repo in its own worktree; you work in the main checkout"
+          : "just you and the harness - no crew on this project")
+    ),
+    // repo binding
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: 12,
+          fontFamily: MONO,
+          color: "#94a3b8",
+          background: "rgba(15,23,42,.3)",
+          border: "1px solid rgba(148,163,184,.2)",
+          borderRadius: 8,
+          padding: "8px 12px",
+        },
+      },
+      h(GitBranch, { size: 13, style: { color: "#67e8f9" } }),
+      owner && repo
+        ? h("span", null, owner + "/" + repo, h("span", { style: { color: "#475569" } }, "  ·  origin"))
+        : h("span", { style: { color: "#fbbf24" } }, "no git origin - a crew needs a repo remote to bind to")
+    ),
+    // status dashboard (crew mode, first-class)
+    hasCrew &&
+      h(
+        "div",
+        { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+        h(StatTile, {
+          icon: h(Bot, { size: 15, style: { color: "#34d399" } }),
+          label: "Crews on duty",
+          value: counts.on_duty != null ? counts.on_duty : crews.length,
+          sub:
+            counts.working != null
+              ? `${counts.working} working · ${counts.paused || 0} paused`
+              : `${crews.length} total`,
+          tone: "#34d399",
+        }),
+        h(StatTile, {
+          icon: h(ListChecks, { size: 15, style: { color: "#fbbf24" } }),
+          label: "Open issues",
+          value: openIssues,
+          sub: "the crew's queue",
+          tone: "#fbbf24",
+        }),
+        h(StatTile, {
+          icon: h(GitBranch, { size: 15, style: { color: "#67e8f9" } }),
+          label: "Open PRs",
+          value: openPulls,
+          sub: "in review / CI",
+          tone: "#67e8f9",
+        }),
+        h(StatTile, {
+          icon: h(Zap, { size: 15, style: { color: wakeOn ? "#a78bfa" : "#64748b" } }),
+          label: "Wake on new work",
+          value: wakeOn ? "on" : "off",
+          sub: "new issues wake the crew",
+          tone: wakeOn ? "#a78bfa" : "#64748b",
+        })
+      ),
+    // enable a crew (auto-setup) - shown until a crew exists for this repo
+    (!hasCrew || crews.length === 0) &&
+      h(
+        Card,
+        { title: "Enable a crew on this repo", icon: h(Bot, { size: 14, style: { color: "#34d399" } }) },
+        h(
+          "div",
+          { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
+          h(Field, { label: "Crew name" },
+            h("input", {
+              style: { ...inputStyle, width: 220, flex: "0 0 auto" },
+              value: crewName,
+              onChange: (e) => setCrewName(e.target.value),
+            })),
+          h(
+            Button,
+            { onClick: enableCrew, disabled: enabling || !owner || !repo },
+            enabling
+              ? h(LoaderCircle, { size: 13, style: { animation: "spin 1.2s linear infinite" } })
+              : h(Zap, { size: 13 }),
+            "Enable crew")
+        ),
+        h(
+          "div",
+          { style: { fontSize: 11, color: "#64748b" } },
+          "Creates a named issue-radar crew bound to this repo and turns on wake-on-new-work, so any issue you create here wakes the crew. The crew works in its own git worktree; you keep the main checkout.")
+      ),
+    // kanban
+    hasCrew &&
+      h(
+        Card,
+        { title: "Board", icon: h(ListChecks, { size: 14, style: { color: "#22d3ee" } }) },
+        radar
+          ? h(KanbanBoard, { issues, pulls })
+          : h("div", { style: { fontSize: 12, color: "#64748b" } }, "loading board…")
+      ),
+    // intake
+    hasCrew &&
+      h(
+        Card,
+        {
+          title: "Intake - what should the crew do next?",
+          icon: h(MessageSquare, { size: 14, style: { color: "#a78bfa" } }),
+        },
+        h(IntakeForm, { pid, onCreated: () => load() })
+      ),
+    // terminal (both modes)
+    h(
+      Card,
+      { title: "Terminal - work alongside the crew", icon: h(Terminal, { size: 14, style: { color: "#34d399" } }) },
+      h(
+        "div",
+        { style: { fontSize: 11, color: "#64748b", marginBottom: 6 } },
+        "Spawns a local shell in your main checkout (the crew runs in its own worktree). Full-screen TUIs are best in a real terminal; this streams output and drives line-oriented commands."
+      ),
+      h(TerminalWidget, { pid, launchCmd: pstate && pstate.launch })
+    ),
+    // error
+    radarErr &&
+      h(
+        "div",
+        {
+          style: {
+            fontSize: 11.5,
+            color: "#f87171",
+            background: "rgba(248,113,113,.08)",
+            border: "1px solid rgba(248,113,113,.3)",
+            borderRadius: 8,
+            padding: "8px 12px",
+          },
+        },
+        radarErr
+      )
   )
 }
 
@@ -1023,6 +1746,9 @@ export default function SiCrewappAidlcApp() {
       act(() => startSetup(proj.id, harness, preset, scope))
   }
 
+  // switch Solo <-> Crew, optionally persisting the issue-radar crew ref
+  const doSetMode = (mode, crew) => act(() => setMode(proj.id, mode, crew))
+
   return h(
     "div",
       {
@@ -1113,6 +1839,7 @@ export default function SiCrewappAidlcApp() {
             onRefresh: refreshProject,
             onInstallCli: doInstall,
             onRunSetup: doRunSetup,
+            onSetMode: doSetMode,
             lines,
             autoScroll,
             setAutoScroll,
